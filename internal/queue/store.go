@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/rkislov/goPrint/internal/database"
 )
 
 const MaxDocumentSize int64 = 100 << 20
@@ -50,8 +50,9 @@ type Job struct {
 	UpdatedAt string `json:"updated_at"`
 }
 type Store struct {
-	db    *sql.DB
-	spool string
+	db     *database.DB
+	spool  string
+	unlock func()
 }
 
 func ID() string {
@@ -63,7 +64,8 @@ func ID() string {
 }
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
-func Open(dir string) (*Store, error) {
+func Open(dir string) (*Store, error) { return OpenDatabase(dir, "") }
+func OpenDatabase(dir, dsn string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -77,21 +79,26 @@ func Open(dir string) (*Store, error) {
 	if err := os.Chmod(spool, 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", filepath.Join(dir, "queue.db"))
+	db, err := database.Open(filepath.Join(dir, "queue.db"), dsn, "goprint_queue")
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	s := &Store{db: db, spool: spool}
-	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
- CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS printers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, uri TEXT NOT NULL, formats TEXT NOT NULL, paused INTEGER NOT NULL DEFAULT 0);
- CREATE TABLE IF NOT EXISTS printer_profiles (printer_id TEXT PRIMARY KEY REFERENCES printers(id), ppd_id TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, printer_id TEXT NOT NULL REFERENCES printers(id), owner TEXT NOT NULL, title TEXT NOT NULL, format TEXT NOT NULL, size INTEGER NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', remote_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS ipp_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id<=2147483647),job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id));
- INSERT INTO ipp_jobs(job_id) SELECT id FROM jobs WHERE NOT EXISTS(SELECT 1 FROM ipp_jobs WHERE job_id=jobs.id) ORDER BY created_at,id;
- CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state,created_at);
- CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), state TEXT NOT NULL, detail TEXT NOT NULL, at TEXT NOT NULL);`)
+	unlock, err := db.LockInstance(context.Background())
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	success := false
+	defer func() {
+		if !success {
+			unlock()
+		}
+	}()
+	s := &Store{db: db, spool: spool, unlock: unlock}
+	_, err = db.Exec(Schema)
+	if err == nil {
+		_, err = db.Exec(`INSERT INTO ipp_jobs(job_id) SELECT id FROM jobs WHERE NOT EXISTS(SELECT 1 FROM ipp_jobs WHERE job_id=jobs.id) ORDER BY created_at,id`)
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -120,9 +127,15 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	success = true
 	return s, nil
 }
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.unlock != nil {
+		s.unlock()
+	}
+	return s.db.Close()
+}
 func (s *Store) AddPrinter(ctx context.Context, p Printer) (Printer, error) {
 	p.ID = ID()
 	p.InputFormats = AcceptedFormats(p)
@@ -319,11 +332,23 @@ func (s *Store) Claim(ctx context.Context) (Job, error) {
 		return Job{}, err
 	}
 	defer tx.Rollback()
+	if err := tx.LockClaims(ctx); err != nil {
+		return Job{}, err
+	}
 	j, err := scanJob(tx.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE state='queued' AND printer_id IN (SELECT id FROM printers WHERE paused=0) AND NOT EXISTS(SELECT 1 FROM jobs active WHERE active.printer_id=jobs.printer_id AND active.state='processing') ORDER BY created_at,id LIMIT 1`))
 	if err != nil {
 		return Job{}, err
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE jobs SET state='processing',updated_at=? WHERE id=?`, now(), j.ID)
+	result, err := tx.ExecContext(ctx, `UPDATE jobs SET state='processing',updated_at=? WHERE id=? AND state='queued'`, now(), j.ID)
+	if err == nil {
+		n, e := result.RowsAffected()
+		if e != nil {
+			return Job{}, e
+		}
+		if n != 1 {
+			return Job{}, ErrConflict
+		}
+	}
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `INSERT INTO events(job_id,state,detail,at) VALUES(?,'processing','delivery started',?)`, j.ID, now())
 	}
@@ -471,3 +496,14 @@ func (s *Store) CancelIPP(ctx context.Context, id string) error {
 	}
 	return s.Cancel(ctx, id)
 }
+
+// Schema is shared by fresh installations and the offline migration tool.
+const Schema = `
+ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS printers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, uri TEXT NOT NULL, formats TEXT NOT NULL, paused INTEGER NOT NULL DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS printer_profiles (printer_id TEXT PRIMARY KEY REFERENCES printers(id), ppd_id TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, printer_id TEXT NOT NULL REFERENCES printers(id), owner TEXT NOT NULL, title TEXT NOT NULL, format TEXT NOT NULL, size INTEGER NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', remote_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS job_options(job_id TEXT PRIMARY KEY REFERENCES jobs(id),options TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS ipp_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id<=2147483647),job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id));
+ CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state,created_at);
+ CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), state TEXT NOT NULL, detail TEXT NOT NULL, at TEXT NOT NULL);`

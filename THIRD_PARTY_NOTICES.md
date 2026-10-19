@@ -36,3 +36,71 @@ PPDs and Linux driver packages are downloaded separately to the private data dir
 - github.com/go-ldap/ldap/v3: [LICENSE](third_party/github.com__go-ldap__ldap__v3/LICENSE)
 
 - github.com/ulikunitz/xz: [LICENSE](third_party/github.com__ulikunitz__xz/LICENSE)
+
+- github.com/alexbrainman/sspi: [LICENSE](third_party/github.com__alexbrainman__sspi/LICENSE)
+
+- github.com/davecgh/go-spew: [LICENSE](third_party/github.com__davecgh__go-spew/LICENSE)
+
+- github.com/google/pprof: [LICENSE](third_party/github.com__google__pprof/LICENSE)
+
+- github.com/hashicorp/go-uuid: [LICENSE](third_party/github.com__hashicorp__go-uuid/LICENSE)
+
+- github.com/jackc/pgpassfile: [LICENSE](third_party/github.com__jackc__pgpassfile/LICENSE)
+
+- github.com/jackc/pgservicefile: [LICENSE](third_party/github.com__jackc__pgservicefile/LICENSE)
+
+- github.com/jackc/pgx/v5: [LICENSE](third_party/github.com__jackc__pgx__v5/LICENSE)
+
+- github.com/jackc/puddle/v2: [LICENSE](third_party/github.com__jackc__puddle__v2/LICENSE)
+
+- github.com/jcmturner/aescts/v2: [LICENSE](third_party/github.com__jcmturner__aescts__v2/LICENSE)
+
+- github.com/jcmturner/dnsutils/v2: [LICENSE](third_party/github.com__jcmturner__dnsutils__v2/LICENSE)
+
+- github.com/jcmturner/gofork: [LICENSE](third_party/github.com__jcmturner__gofork/LICENSE)
+
+- github.com/jcmturner/goidentity/v6: [LICENSE](third_party/github.com__jcmturner__goidentity__v6/LICENSE)
+
+- github.com/jcmturner/gokrb5/v8: [LICENSE](third_party/github.com__jcmturner__gokrb5__v8/LICENSE)
+
+- github.com/jcmturner/rpc/v2: [LICENSE](third_party/github.com__jcmturner__rpc__v2/LICENSE)
+
+- github.com/kr/pretty: [License](third_party/github.com__kr__pretty/License)
+
+- github.com/kr/text: [License](third_party/github.com__kr__text/License)
+
+- github.com/pmezard/go-difflib: [LICENSE](third_party/github.com__pmezard__go-difflib/LICENSE)
+
+- github.com/rogpeppe/go-internal: [LICENSE](third_party/github.com__rogpeppe__go-internal/LICENSE)
+
+- github.com/stretchr/testify: [LICENSE](third_party/github.com__stretchr__testify/LICENSE)
+
+- golang.org/x/mod: [LICENSE](third_party/golang.org__x__mod/LICENSE), [PATENTS](third_party/golang.org__x__mod/PATENTS)
+
+- golang.org/x/net: [LICENSE](third_party/golang.org__x__net/LICENSE), [PATENTS](third_party/golang.org__x__net/PATENTS)
+
+- golang.org/x/sync: [LICENSE](third_party/golang.org__x__sync/LICENSE), [PATENTS](third_party/golang.org__x__sync/PATENTS)
+
+- golang.org/x/tools: [LICENSE](third_party/golang.org__x__tools/LICENSE), [PATENTS](third_party/golang.org__x__tools/PATENTS)
+
+- gopkg.in/check.v1: [LICENSE](third_party/gopkg.in__check.v1/LICENSE)
+
+- gopkg.in/yaml.v3: [LICENSE](third_party/gopkg.in__yaml.v3/LICENSE), [NOTICE](third_party/gopkg.in__yaml.v3/NOTICE)
+
+- modernc.org/cc/v4: [LICENSE](third_party/modernc.org__cc__v4/LICENSE)
+
+- modernc.org/ccgo/v4: [LICENSE](third_party/modernc.org__ccgo__v4/LICENSE)
+
+- modernc.org/fileutil: [LICENSE](third_party/modernc.org__fileutil/LICENSE)
+
+- modernc.org/gc/v2: [LICENSE](third_party/modernc.org__gc__v2/LICENSE)
+
+- modernc.org/goabi0: [LICENSE](third_party/modernc.org__goabi0/LICENSE)
+
+- modernc.org/opt: [LICENSE](third_party/modernc.org__opt/LICENSE)
+
+- modernc.org/sortutil: [LICENSE](third_party/modernc.org__sortutil/LICENSE)
+
+- modernc.org/strutil: [LICENSE](third_party/modernc.org__strutil/LICENSE)
+
+- modernc.org/token: [LICENSE](third_party/modernc.org__token/LICENSE)

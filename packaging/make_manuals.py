@@ -30,13 +30,22 @@ styles = {
 }
 def inline(t):
  t=escape(t)
+ t = re.sub(r'\[([^]]+)\]\((https?://[^)]+)\)',r'<link href="\2" color="#176e59">\1</link>',t)
  return re.sub(r'`([^`]+)`',r'<b>\1</b>',t)
 def footer(c,doc):
  c.saveState();w,h=doc.pagesize
  c.setStrokeColor(HexColor('#d4e1d9'));c.line(44,40,w-44,40)
  c.setFont('Manual',8);c.setFillColor(HexColor('#62756e'))
- c.drawString(44,26,'GoPrint · v0.1.0-alpha.1 · 19.10.2026')
+ c.drawString(44,26,'GoPrint · v0.1.0-alpha.2 · 19.10.2026')
  c.drawRightString(w-44,26,str(doc.page));c.restoreState()
+class ManualDocument(SimpleDocTemplate):
+ def afterFlowable(self, flowable):
+  if isinstance(flowable, Paragraph) and flowable.style.name == 'h2':
+   key = 'section-' + str(getattr(self, '_section_count', 0))
+   self._section_count = getattr(self, '_section_count', 0) + 1
+   self.canv.bookmarkPage(key)
+   self.canv.addOutlineEntry(flowable.getPlainText(), key, level=0)
+
 def render(source,target):
  story=[];lines=source.read_text().splitlines();i=0
  while i<len(lines):
@@ -51,7 +60,7 @@ def render(source,target):
    while i<len(lines) and not lines[i].startswith('```'):code.append(lines[i]);i+=1
    i+=1
    # Wrap only visual presentation; exact copyable commands remain in Markdown.
-   code='\n'.join('\n'.join(textwrap.wrap(x, width=108,replace_whitespace=False,drop_whitespace=False) or ['']) for x in code)
+   code='\n'.join('\n'.join(textwrap.wrap(x, width=88,replace_whitespace=False,drop_whitespace=False) or ['']) for x in code)
    story.append(Preformatted(escape(code),styles['code']));continue
   image=re.match(r'!\[(.*?)\]\((.*?)\)',line)
   if image:
@@ -65,7 +74,7 @@ def render(source,target):
    para.append(lines[i]);i+=1
   story.append(Paragraph('<br/>'.join(inline(s) for s in para),styles['body']))
  target.parent.mkdir(parents=True,exist_ok=True)
- doc=SimpleDocTemplate(str(target),pagesize=(595.28,841.89),leftMargin=44,rightMargin=44,topMargin=44,bottomMargin=55,title=source.read_text().splitlines()[0][2:],author='Кислов Роман Сергеевич',pageCompression=1)
+ doc=ManualDocument(str(target),pagesize=(595.28,841.89),leftMargin=44,rightMargin=44,topMargin=44,bottomMargin=55,title=source.read_text().splitlines()[0][2:],author='Кислов Роман Сергеевич',pageCompression=1)
  doc.build(story,onFirstPage=footer,onLaterPages=footer)
 for src,name in [('ADMINISTRATOR.md','GoPrint-Administrator.pdf'),('USER.md','GoPrint-User.pdf')]:
  render(ROOT/'docs'/src,ROOT/'output/pdf'/name)
