@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rkislov/goPrint/internal/database"
 	"github.com/rkislov/goPrint/internal/queue"
-	_ "modernc.org/sqlite"
 )
 
 type Scanner struct {
@@ -48,7 +48,7 @@ type Options struct {
 	Format     string `json:"format"`
 }
 type Service struct {
-	db      *sql.DB
+	db      *database.DB
 	dir     string
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -58,24 +58,26 @@ type Service struct {
 	closing bool
 }
 
-func Open(dir string) (*Service, error) {
+func Open(dir string) (*Service, error) { return OpenDatabase(dir, "") }
+
+func OpenDatabase(dir, dsn string) (*Service, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", filepath.Join(dir, "scans.db"))
+	db, err := database.Open(filepath.Join(dir, "scans.db"), dsn, "goprint_scans")
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000;
- CREATE TABLE IF NOT EXISTS scanners(id TEXT PRIMARY KEY,name TEXT NOT NULL,uri TEXT NOT NULL,token_hash TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS scan_owners(id TEXT PRIMARY KEY,owner TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS scans(id TEXT PRIMARY KEY,scanner_id TEXT NOT NULL REFERENCES scanners(id),title TEXT NOT NULL,source TEXT NOT NULL,state TEXT NOT NULL,detail TEXT NOT NULL,format TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL);
- UPDATE scans SET state='failed',detail='server stopped during scan; check device before restarting' WHERE state='processing';`)
+	_, err = db.Exec(Schema)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
+	if _, err = db.Exec(`UPDATE scans SET state='failed',detail='server stopped during scan; check device before restarting' WHERE state='processing'`); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Service{db: db, dir: dir, ctx: ctx, cancel: cancel, active: map[string]bool{}}, nil
 }
@@ -318,3 +320,9 @@ func (s *Service) JobsFor(ctx context.Context, owner string, admin bool) ([]Job,
 	}
 	return out, rows.Err()
 }
+
+// Schema is shared by fresh installations and the offline migration tool.
+const Schema = `
+ CREATE TABLE IF NOT EXISTS scanners(id TEXT PRIMARY KEY,name TEXT NOT NULL,uri TEXT NOT NULL,token_hash TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS scan_owners(id TEXT PRIMARY KEY,owner TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS scans(id TEXT PRIMARY KEY,scanner_id TEXT NOT NULL REFERENCES scanners(id),title TEXT NOT NULL,source TEXT NOT NULL,state TEXT NOT NULL,detail TEXT NOT NULL,format TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL);`

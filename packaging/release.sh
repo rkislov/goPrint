@@ -13,13 +13,15 @@ for arch in amd64 arm64; do
  name="goprint-$version-linux-$arch"
  root="dist/release/$name"
  mkdir -p "$root/packaging" "$root/docs"
- for command in goprintd goprintctl goprint-ppds; do
+ for command in goprintd goprintctl goprint-ppds goprint-migrate; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-s -w -X github.com/rkislov/goPrint/internal/buildinfo.Version=$version -X github.com/rkislov/goPrint/internal/buildinfo.Commit=$commit -X github.com/rkislov/goPrint/internal/buildinfo.Date=$date" -o "$root/$command" "./cmd/$command"
  done
  cp LICENSE NOTICE THIRD_PARTY_NOTICES.md README.md "$root/"
  cp -R third_party "$root/"
- cp packaging/goprint.service "$root/packaging/"
- cp docs/ADMINISTRATOR.md docs/USER.md "$root/docs/"
+ cp packaging/postgresql-init.sql packaging/sqlite-to-postgresql.sh "$root/packaging/"
+ cp docs/POSTGRESQL.md "$root/docs/"
+ cp packaging/goprint.service packaging/domain.example.json "$root/packaging/"
+ cp docs/ADMINISTRATOR.md docs/USER.md docs/DOMAIN-AND-CLIENTS.md "$root/docs/"
  cp -R docs/images "$root/docs/"
  cp output/pdf/GoPrint-Administrator.pdf output/pdf/GoPrint-User.pdf "$root/docs/"
  printf 'version=%s\ncommit=%s\ndate=%s\nplatform=linux/%s\n' "$version" "$commit" "$date" "$arch" > "$root/BUILDINFO"

@@ -22,6 +22,7 @@ import (
 
 	"github.com/rkislov/goPrint/internal/audit"
 	"github.com/rkislov/goPrint/internal/auth"
+	"github.com/rkislov/goPrint/internal/database"
 	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/filtering"
 	"github.com/rkislov/goPrint/internal/printing"
@@ -46,6 +47,7 @@ func main() {
 func run() error {
 	publicURL := flag.String("public-url", "", "canonical HTTPS origin used by client provisioning and IPP")
 	domainConfig := flag.String("domain-config", "", "AD/Samba LDAPS or StartTLS JSON configuration")
+	dsnFile := flag.String("postgres-dsn-file", "", "private PostgreSQL DSN file; default uses SQLite")
 	data := flag.String("data", "./var/goprint", "private data directory")
 	listen := flag.String("listen", "127.0.0.1:8631", "loopback HTTP address")
 	cert := flag.String("tls-cert", "", "HTTPS certificate PEM file")
@@ -103,7 +105,11 @@ func run() error {
 	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return fmt.Errorf("data directory is already in use: %w", err)
 	}
-	store, err := queue.Open(*data)
+	dsn, err := database.ReadDSN(*dsnFile)
+	if err != nil {
+		return err
+	}
+	store, err := queue.OpenDatabase(*data, dsn)
 	if err != nil {
 		return err
 	}
@@ -124,7 +130,7 @@ func run() error {
 	if *preload && catalog.KatushaStatus().Count == 0 {
 		catalog.StartKatushaSync(catalogCtx)
 	}
-	scans, err := scanning.Open(filepath.Join(*data, "scans"))
+	scans, err := scanning.OpenDatabase(filepath.Join(*data, "scans"), dsn)
 	if err != nil {
 		return err
 	}

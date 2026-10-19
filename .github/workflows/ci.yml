@@ -10,6 +10,18 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: goprint-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -25,6 +37,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends cups cups-filters ghostscript cups-ipp-utils
       - run: make check
         env:
+          GOPRINT_TEST_POSTGRES_DSN: "postgres://postgres:goprint-ci-only@127.0.0.1:5432/postgres?sslmode=disable"
           GOPRINT_REQUIRE_CUPS_TEST: "1"
           GOPRINT_REQUIRE_IPP_TEST: "1"
           GOPRINT_REQUIRE_DRIVERLESS_TEST: "1"
