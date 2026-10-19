@@ -70,11 +70,7 @@ func (s *Server) clientRoutes(api *http.ServeMux) {
 set -euo pipefail
 command -v lpadmin >/dev/null || { echo 'Install CUPS client and daemon using your OS package manager.' >&2; exit 1; }
 if [[ $EUID -ne 0 ]]; then echo 'Run this script using sudo to create the local CUPS queue.' >&2; exit 1; fi
-printf 'GoPrint login (user@domain or local-admin): '
-IFS= read -r login
-[[ -n "$login" ]] || exit 1
-# lpadmin/libcups may prompt for credentials while querying the authenticated endpoint.
-lpadmin -U "$login" -p %s -D %s -v %s -m everywhere -o auth-info-required=username,password -E
+lpadmin -p %s -D %s -v %s -m everywhere -o auth-info-required=username,password -E
 printf 'Created queue: %%s\n' %s
 printf 'Enter your GoPrint credentials when CUPS requests them for a print job.\n'
 `, shQuote(queueName), shQuote(p.Name), shQuote(device), shQuote(queueName))
