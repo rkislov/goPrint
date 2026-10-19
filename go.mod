@@ -4,11 +4,15 @@ go 1.25.0
 
 require (
 	github.com/OpenPrinting/goipp v1.1.0
+	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667
+	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/pdfcpu/pdfcpu v0.11.1
+	github.com/ulikunitz/xz v0.5.15
 	modernc.org/sqlite v1.39.1
 )
 
 require (
+	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

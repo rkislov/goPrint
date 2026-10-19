@@ -22,8 +22,10 @@ jobs:
       - name: Install CUPS filter integration dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends cups cups-filters ghostscript
+          sudo apt-get install -y --no-install-recommends cups cups-filters ghostscript cups-ipp-utils
       - run: make check
         env:
           GOPRINT_REQUIRE_CUPS_TEST: "1"
+          GOPRINT_REQUIRE_IPP_TEST: "1"
+          GOPRINT_REQUIRE_DRIVERLESS_TEST: "1"
       - run: make build linux

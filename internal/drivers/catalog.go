@@ -45,6 +45,7 @@ type Status struct {
 	SHA256    string `json:"sha256,omitempty"`
 }
 type Catalog struct {
+	katusha  VendorStatus
 	mu       sync.RWMutex
 	dir      string
 	profiles []Profile
@@ -58,7 +59,7 @@ func Open(dir string) (*Catalog, error) {
 	c := &Catalog{dir: dir, status: Status{Source: SourceURL}, profiles: []Profile{}}
 	b, err := os.ReadFile(filepath.Join(dir, "catalog.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		return c, nil
+		return c, c.loadVendor()
 	}
 	if err != nil {
 		return nil, err
@@ -74,7 +75,7 @@ func Open(dir string) (*Catalog, error) {
 	c.status = saved.Status
 	c.status.Syncing = false
 	c.status.Count = len(c.profiles)
-	return c, nil
+	return c, c.loadVendor()
 }
 func (c *Catalog) Status() Status { c.mu.RLock(); defer c.mu.RUnlock(); return c.status }
 func (c *Catalog) Find(id string) (Profile, bool) {
@@ -278,6 +279,14 @@ func (c *Catalog) Import(r io.Reader) error {
 	if err = os.Rename(name, filepath.Join(c.dir, "source-"+digest+".tar.gz")); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.profiles {
+		if p.Source == katushaSource {
+			profiles = mergeProfiles(profiles, []Profile{p})
+		}
+	}
+	status.Count = len(profiles)
 	b, err := json.Marshal(struct {
 		Profiles []Profile `json:"profiles"`
 		Status   Status    `json:"status"`
@@ -303,11 +312,9 @@ func (c *Catalog) Import(r io.Reader) error {
 	if err = os.Rename(index.Name(), filepath.Join(c.dir, "catalog.json")); err != nil {
 		return err
 	}
-	c.mu.Lock()
 	c.profiles = profiles
 	status.Syncing = c.status.Syncing
 	c.status = status
-	c.mu.Unlock()
 	return nil
 }
 func Parse(data []byte) (Profile, error) {
@@ -384,4 +391,21 @@ func (c *Catalog) PPD(id string) ([]byte, error) {
 		return nil, errors.New("PPD integrity check failed")
 	}
 	return data, nil
+}
+
+func (c *Catalog) loadVendor() error {
+	b, err := os.ReadFile(filepath.Join(c.dir, "vendor-katusha.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var p []Profile
+	if err = json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	c.profiles = mergeProfiles(c.profiles, p)
+	c.status.Count = len(c.profiles)
+	return nil
 }

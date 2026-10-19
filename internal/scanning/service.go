@@ -29,6 +29,7 @@ type Scanner struct {
 	DeviceToken string `json:"device_token,omitempty"`
 }
 type Job struct {
+	Owner     string `json:"owner"`
 	ID        string `json:"id"`
 	ScannerID string `json:"scanner_id"`
 	Title     string `json:"title"`
@@ -40,6 +41,7 @@ type Job struct {
 	CreatedAt string `json:"created_at"`
 }
 type Options struct {
+	Owner      string `json:"-"`
 	ScannerID  string `json:"scanner_id"`
 	Source     string `json:"source"`
 	Resolution int    `json:"resolution"`
@@ -67,6 +69,7 @@ func Open(dir string) (*Service, error) {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(`PRAGMA journal_mode=WAL;PRAGMA synchronous=FULL;PRAGMA foreign_keys=ON;PRAGMA busy_timeout=5000;
  CREATE TABLE IF NOT EXISTS scanners(id TEXT PRIMARY KEY,name TEXT NOT NULL,uri TEXT NOT NULL,token_hash TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS scan_owners(id TEXT PRIMARY KEY,owner TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS scans(id TEXT PRIMARY KEY,scanner_id TEXT NOT NULL REFERENCES scanners(id),title TEXT NOT NULL,source TEXT NOT NULL,state TEXT NOT NULL,detail TEXT NOT NULL,format TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL);
  UPDATE scans SET state='failed',detail='server stopped during scan; check device before restarting' WHERE state='processing';`)
 	if err != nil {
@@ -135,11 +138,11 @@ func (s *Service) Authenticate(ctx context.Context, id, token string) bool {
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(hex.EncodeToString(sum[:]))) == 1
 }
 
-const columns = `id,scanner_id,title,source,state,detail,format,size,created_at`
+const columns = `id,scanner_id,title,source,state,detail,format,size,created_at,COALESCE((SELECT owner FROM scan_owners WHERE scan_owners.id=scans.id),'local-admin')`
 
 func scan(row interface{ Scan(...any) error }) (Job, error) {
 	var j Job
-	err := row.Scan(&j.ID, &j.ScannerID, &j.Title, &j.Source, &j.State, &j.Detail, &j.Format, &j.Size, &j.CreatedAt)
+	err := row.Scan(&j.ID, &j.ScannerID, &j.Title, &j.Source, &j.State, &j.Detail, &j.Format, &j.Size, &j.CreatedAt, &j.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = queue.ErrNotFound
 	}
@@ -166,8 +169,23 @@ func (s *Service) Job(ctx context.Context, id string) (Job, error) {
 }
 func (s *Service) Path(id string) string { return filepath.Join(s.dir, id+".data") }
 func (s *Service) insert(ctx context.Context, j Job) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scans VALUES(?,?,?,?,?,?,?,?,?)`, j.ID, j.ScannerID, j.Title, j.Source, j.State, j.Detail, j.Format, j.Size, j.CreatedAt)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO scans VALUES(?,?,?,?,?,?,?,?,?)`, j.ID, j.ScannerID, j.Title, j.Source, j.State, j.Detail, j.Format, j.Size, j.CreatedAt)
+	if err != nil {
+		return err
+	}
+	if j.Owner == "" {
+		j.Owner = "local-admin"
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO scan_owners VALUES(?,?)`, j.ID, j.Owner)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Service) Receive(ctx context.Context, id, title string, r io.Reader) (Job, error) {
 	if _, err := s.Get(ctx, id); err != nil {
@@ -255,7 +273,7 @@ func (s *Service) Start(ctx context.Context, o Options) (Job, error) {
 	if s.closing || s.active[scanner.ID] || len(s.active) >= 4 {
 		return Job{}, queue.ErrConflict
 	}
-	j := Job{ID: queue.ID(), ScannerID: scanner.ID, Title: scanner.Name + " · сканирование", Source: "browser", State: "processing", Format: o.Format, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	j := Job{Owner: o.Owner, ID: queue.ID(), ScannerID: scanner.ID, Title: scanner.Name + " · сканирование", Source: "browser", State: "processing", Format: o.Format, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if err = s.insert(ctx, j); err != nil {
 		return Job{}, err
 	}
@@ -279,4 +297,24 @@ func (s *Service) Start(ctx context.Context, o Options) (Job, error) {
 		}
 	}()
 	return j, nil
+}
+
+func (s *Service) JobsFor(ctx context.Context, owner string, admin bool) ([]Job, error) {
+	if admin {
+		return s.Jobs(ctx)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM scans WHERE COALESCE((SELECT owner FROM scan_owners WHERE scan_owners.id=scans.id),'local-admin')=? ORDER BY created_at DESC LIMIT 200`, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Job{}
+	for rows.Next() {
+		j, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
 }
