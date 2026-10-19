@@ -53,7 +53,7 @@ func Validate(p queue.Printer) error {
 	}
 	for _, f := range p.Formats {
 		switch f {
-		case "application/pdf", "application/postscript", "application/octet-stream", "image/pwg-raster", "image/jpeg":
+		case "application/pdf", "application/postscript", "application/octet-stream", "image/pwg-raster", "image/jpeg", "image/png":
 		default:
 			return fmt.Errorf("unsupported document format %q", f)
 		}

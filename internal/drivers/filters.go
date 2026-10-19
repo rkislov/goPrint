@@ -79,7 +79,7 @@ func (f *FilterManager) Download(ctx context.Context) (string, error) {
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, apt, "download", "cups-filters", "cups-filters-core-drivers", "ghostscript", "poppler-utils", "printer-driver-gutenprint", "printer-driver-hpcups", "printer-driver-brlaser", "printer-driver-splix", "foomatic-db-engine")
+		cmd := exec.CommandContext(ctx, apt, "download", "cups", "cups-filters", "cups-filters-core-drivers", "ghostscript", "poppler-utils", "printer-driver-gutenprint", "printer-driver-hpcups", "printer-driver-brlaser", "printer-driver-splix", "foomatic-db-engine")
 		cmd.Dir = dir
 		err := cmd.Run()
 		f.mu.Lock()
@@ -88,7 +88,7 @@ func (f *FilterManager) Download(ctx context.Context) (string, error) {
 		if err != nil {
 			f.status = "Не удалось скачать пакеты. Проверьте настроенные репозитории apt и доступность сети."
 		} else {
-			f.status = "Пакеты загружены в " + dir + ". Установите их через apt для разрешения системных зависимостей. Фильтры не включаются автоматически."
+			f.status = "Пакеты загружены в " + dir + ". Установите их через apt для разрешения системных зависимостей. Установленные фильтры применяются автоматически для принтеров с выбранным PPD."
 		}
 	}()
 	return "Загрузка пакетов запущена. Статус доступен в разделе фильтров.", nil

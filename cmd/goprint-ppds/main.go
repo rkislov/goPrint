@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/rkislov/goPrint/internal/buildinfo"
 	"github.com/rkislov/goPrint/internal/drivers"
 	"os"
 )
@@ -12,7 +13,12 @@ import (
 func main() {
 	dir := flag.String("dir", "./var/goprint/ppds", "catalog directory")
 	archive := flag.String("archive", "", "local OpenPrinting .tar.gz archive")
+	version := flag.Bool("version", false, "print build version")
 	flag.Parse()
+	if *version {
+		fmt.Println(buildinfo.String())
+		return
+	}
 	if *archive == "" {
 		fmt.Fprintln(os.Stderr, "specify -archive PATH")
 		os.Exit(1)

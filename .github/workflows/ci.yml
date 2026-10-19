@@ -19,5 +19,11 @@ jobs:
       - run: go mod verify
       - run: test -z "$(gofmt -l cmd internal)"
       - run: node --check internal/server/web/app.js
+      - name: Install CUPS filter integration dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cups cups-filters ghostscript
       - run: make check
+        env:
+          GOPRINT_REQUIRE_CUPS_TEST: "1"
       - run: make build linux

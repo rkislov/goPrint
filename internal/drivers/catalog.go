@@ -357,3 +357,31 @@ func Parse(data []byte) (Profile, error) {
 	}
 	return p, nil
 }
+
+// PPD returns a verified copy of a content-addressed PPD. Keeping the file hash
+// pinned also makes existing printer profiles independent of catalog updates.
+func (c *Catalog) PPD(id string) ([]byte, error) {
+	if len(id) != 64 {
+		return nil, errors.New("invalid PPD identifier")
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return nil, errors.New("invalid PPD identifier")
+	}
+	f, err := os.Open(filepath.Join(c.dir, id+".ppd"))
+	if err != nil {
+		return nil, errors.New("selected PPD file is unavailable")
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxPPD+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxPPD {
+		return nil, errors.New("PPD exceeds size limit")
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != id {
+		return nil, errors.New("PPD integrity check failed")
+	}
+	return data, nil
+}
