@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Кислов Роман Сергеевич
+
 // Package backend delivers already rendered documents to printers.
 package backend
 

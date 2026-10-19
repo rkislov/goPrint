@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Кислов Роман Сергеевич
+
 // Package queue implements the durable print queue. Documents are committed to
 // disk before their database records become visible to workers.
 package queue
@@ -30,6 +33,7 @@ type Printer struct {
 	URI     string   `json:"uri"`
 	Formats []string `json:"formats"`
 	Paused  bool     `json:"paused"`
+	PPDID   string   `json:"ppd_id,omitempty"`
 }
 type Job struct {
 	ID        string `json:"id"`
@@ -79,10 +83,17 @@ func Open(dir string) (*Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, spool: spool}
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS printers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, uri TEXT NOT NULL, formats TEXT NOT NULL, paused INTEGER NOT NULL DEFAULT 0);
+ CREATE TABLE IF NOT EXISTS printer_profiles (printer_id TEXT PRIMARY KEY REFERENCES printers(id), ppd_id TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, printer_id TEXT NOT NULL REFERENCES printers(id), owner TEXT NOT NULL, title TEXT NOT NULL, format TEXT NOT NULL, size INTEGER NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', remote_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state,created_at);
  CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), state TEXT NOT NULL, detail TEXT NOT NULL, at TEXT NOT NULL);`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	_, err = db.Exec(`INSERT INTO settings(key,value) VALUES('instance_id',?) ON CONFLICT(key) DO NOTHING`, "\""+ID()+"\"")
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -112,11 +123,22 @@ func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) AddPrinter(ctx context.Context, p Printer) (Printer, error) {
 	p.ID = ID()
 	b, _ := json.Marshal(p.Formats)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO printers(id,name,uri,formats,paused) VALUES(?,?,?,?,?)`, p.ID, p.Name, p.URI, string(b), p.Paused)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return p, err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO printers(id,name,uri,formats,paused) VALUES(?,?,?,?,?)`, p.ID, p.Name, p.URI, string(b), p.Paused)
+	if err == nil && p.PPDID != "" {
+		_, err = tx.ExecContext(ctx, `INSERT INTO printer_profiles(printer_id,ppd_id) VALUES(?,?)`, p.ID, p.PPDID)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
 	return p, err
 }
 func (s *Store) Printers(ctx context.Context) ([]Printer, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,uri,formats,paused FROM printers ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,uri,formats,paused,COALESCE((SELECT ppd_id FROM printer_profiles WHERE printer_id=printers.id),'') FROM printers ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +147,7 @@ func (s *Store) Printers(ctx context.Context) ([]Printer, error) {
 	for rows.Next() {
 		var p Printer
 		var formats string
-		if err := rows.Scan(&p.ID, &p.Name, &p.URI, &formats, &p.Paused); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.URI, &formats, &p.Paused, &p.PPDID); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(formats), &p.Formats); err != nil {
@@ -138,7 +160,7 @@ func (s *Store) Printers(ctx context.Context) ([]Printer, error) {
 func (s *Store) Printer(ctx context.Context, id string) (Printer, error) {
 	var p Printer
 	var b string
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,uri,formats,paused FROM printers WHERE id=?`, id).Scan(&p.ID, &p.Name, &p.URI, &b, &p.Paused)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,uri,formats,paused,COALESCE((SELECT ppd_id FROM printer_profiles WHERE printer_id=printers.id),'') FROM printers WHERE id=?`, id).Scan(&p.ID, &p.Name, &p.URI, &b, &p.Paused, &p.PPDID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
