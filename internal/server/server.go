@@ -23,6 +23,7 @@ import (
 	"github.com/rkislov/goPrint/internal/backend"
 	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/maildelivery"
+	"github.com/rkislov/goPrint/internal/monitoring"
 	"github.com/rkislov/goPrint/internal/personal"
 	"github.com/rkislov/goPrint/internal/queue"
 	"github.com/rkislov/goPrint/internal/scanning"
@@ -30,6 +31,7 @@ import (
 )
 
 type Server struct {
+	Monitoring  *monitoring.Service
 	Antivirus   *antivirus.Service
 	emailMu     sync.Mutex
 	Personal    *personal.Service
@@ -100,6 +102,7 @@ func (s *Server) Handler() http.Handler {
 	s.ssoRoutes(api)
 	s.emailRoutes(api)
 	s.antivirusRoutes(api)
+	s.monitoringRoutes(api)
 	api.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := s.identity(r)
 		respond(w, id, nil)

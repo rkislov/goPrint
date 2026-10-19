@@ -110,3 +110,5 @@ PPDs and Linux driver packages are downloaded separately to the private data dir
 - modernc.org/token: [LICENSE](third_party/modernc.org__token/LICENSE)
 
 - Go runtime: [LICENSE](third_party/Go/LICENSE), [PATENTS](third_party/Go/PATENTS)
+
+- github.com/gosnmp/gosnmp: [LICENSE](third_party/github.com__gosnmp__gosnmp/LICENSE), [AUTHORS](third_party/github.com__gosnmp__gosnmp/AUTHORS.md)
