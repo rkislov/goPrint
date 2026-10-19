@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/rkislov/goPrint/internal/buildinfo"
 	"io"
 	"net/http"
 	"net/url"
@@ -27,12 +28,18 @@ func main() {
 }
 func run() error {
 	addr := flag.String("addr", "http://127.0.0.1:8631", "server URL")
+	ppd := flag.String("ppd", "", "catalog PPD ID for add-printer (enables automatic filtering)")
 	format := flag.String("format", "application/pdf", "document MIME type")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: goprintctl [flags] printers | add-printer NAME URI | jobs | job ID | events ID | submit PRINTER_ID FILE | cancel JOB_ID | pause PRINTER_ID | resume PRINTER_ID")
 		flag.PrintDefaults()
 	}
+	version := flag.Bool("version", false, "print build version")
 	flag.Parse()
+	if *version {
+		fmt.Println(buildinfo.String())
+		return nil
+	}
 	args := flag.Args()
 	if len(args) == 0 {
 		flag.Usage()
@@ -64,7 +71,7 @@ func run() error {
 	case args[0] == "add-printer" && len(args) == 3:
 		method = http.MethodPost
 		path = "/api/printers"
-		b, _ := json.Marshal(map[string]any{"name": args[1], "uri": args[2], "formats": []string{*format}})
+		b, _ := json.Marshal(map[string]any{"name": args[1], "uri": args[2], "formats": []string{*format}, "ppd_id": *ppd})
 		body = bytes.NewReader(b)
 	case args[0] == "submit" && len(args) == 3:
 		method = http.MethodPost

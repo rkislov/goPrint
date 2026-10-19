@@ -12,3 +12,5 @@ coverage.out
 /var/
 /docs/private/
 *.local.md
+
+/output/

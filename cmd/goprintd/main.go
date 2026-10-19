@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/rkislov/goPrint/internal/buildinfo"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,8 +21,9 @@ import (
 	"time"
 
 	"github.com/rkislov/goPrint/internal/audit"
-	"github.com/rkislov/goPrint/internal/backend"
 	"github.com/rkislov/goPrint/internal/drivers"
+	"github.com/rkislov/goPrint/internal/filtering"
+	"github.com/rkislov/goPrint/internal/printing"
 	"github.com/rkislov/goPrint/internal/queue"
 	"github.com/rkislov/goPrint/internal/scanning"
 	"github.com/rkislov/goPrint/internal/server"
@@ -46,8 +48,17 @@ func run() error {
 	cert := flag.String("tls-cert", "", "HTTPS certificate PEM file")
 	key := flag.String("tls-key", "", "HTTPS private key PEM file")
 	workers := flag.Int("workers", 4, "delivery workers (1–50)")
+	filterLimit := flag.Int64("filter-output-mib", 512, "maximum prepared PPD document size in MiB (1–4096)")
 	preload := flag.Bool("preload-ppds", true, "download OpenPrinting PPD catalog on first start")
+	version := flag.Bool("version", false, "print build version")
 	flag.Parse()
+	if *version {
+		fmt.Println(buildinfo.String())
+		return nil
+	}
+	if *filterLimit < 1 || *filterLimit > 4096 {
+		return errors.New("filter-output-mib must be between 1 and 4096")
+	}
 	token := os.Getenv("GOPRINT_TOKEN")
 	if len(token) < 32 {
 		return errors.New("GOPRINT_TOKEN must contain at least 32 bytes")
@@ -105,6 +116,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	filters, err := filtering.New(filepath.Join(*data, "prepared"), catalog, *filterLimit<<20)
+	if err != nil {
+		return err
+	}
+	pipeline := &printing.Pipeline{Store: store, Marker: mark, Filters: filters}
 	exporter := audit.New(store)
 	auditCtx, cancelAudit := context.WithCancel(context.Background())
 	auditDone := make(chan struct{})
@@ -118,29 +134,7 @@ func run() error {
 	defer cancelDelivery()
 	workersDone := make(chan struct{})
 	go func() {
-		store.Run(stopClaims, delivery, *workers, func(ctx context.Context, p queue.Printer, j queue.Job, path string) queue.DeliveryResult {
-			policy := watermark.Default()
-			if err := store.Setting(ctx, "watermark", &policy); err != nil {
-				return queue.DeliveryResult{State: "failed", Detail: "cannot read watermark policy; document not sent"}
-			}
-			marked, cleanup, err := mark.PrepareIsolated(ctx, policy, j, path)
-			if err != nil {
-				return queue.DeliveryResult{State: "failed", Detail: err.Error()}
-			}
-			defer cleanup()
-			if policy.Enabled {
-				if err = store.RecordEvent(ctx, j.ID, "watermark applied; policy="+policy.Version); err != nil {
-					return queue.DeliveryResult{State: "failed", Detail: "cannot audit watermark; document not sent"}
-				}
-			}
-			info, err := os.Stat(marked)
-			if err != nil {
-				return queue.DeliveryResult{State: "failed", Detail: "cannot read prepared document"}
-			}
-			j.Size = info.Size()
-			r := backend.Deliver(ctx, p, j, marked)
-			return queue.DeliveryResult{State: r.State, Detail: r.Detail, RemoteID: r.RemoteID}
-		})
+		store.Run(stopClaims, delivery, *workers, pipeline.Deliver)
 		close(workersDone)
 	}()
 	serveErr := make(chan error, 1)

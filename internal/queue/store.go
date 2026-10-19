@@ -28,12 +28,13 @@ var ErrConflict = errors.New("operation conflicts with current state")
 var ErrTooLarge = errors.New("document exceeds size limit")
 
 type Printer struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	URI     string   `json:"uri"`
-	Formats []string `json:"formats"`
-	Paused  bool     `json:"paused"`
-	PPDID   string   `json:"ppd_id,omitempty"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	URI          string   `json:"uri"`
+	Formats      []string `json:"formats"`
+	Paused       bool     `json:"paused"`
+	PPDID        string   `json:"ppd_id,omitempty"`
+	InputFormats []string `json:"input_formats"`
 }
 type Job struct {
 	ID        string `json:"id"`
@@ -122,6 +123,7 @@ func Open(dir string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) AddPrinter(ctx context.Context, p Printer) (Printer, error) {
 	p.ID = ID()
+	p.InputFormats = AcceptedFormats(p)
 	b, _ := json.Marshal(p.Formats)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -153,6 +155,7 @@ func (s *Store) Printers(ctx context.Context) ([]Printer, error) {
 		if err := json.Unmarshal([]byte(formats), &p.Formats); err != nil {
 			return nil, err
 		}
+		p.InputFormats = AcceptedFormats(p)
 		result = append(result, p)
 	}
 	return result, rows.Err()
@@ -167,6 +170,7 @@ func (s *Store) Printer(ctx context.Context, id string) (Printer, error) {
 	if err == nil {
 		err = json.Unmarshal([]byte(b), &p.Formats)
 	}
+	p.InputFormats = AcceptedFormats(p)
 	return p, err
 }
 func (s *Store) Pause(ctx context.Context, id string, paused bool) error {
@@ -185,13 +189,7 @@ func (s *Store) Submit(ctx context.Context, printerID, owner, title, format stri
 	if err != nil {
 		return Job{}, err
 	}
-	allowed := false
-	for _, f := range p.Formats {
-		if f == format {
-			allowed = true
-		}
-	}
-	if !allowed {
+	if !Accepts(p, format) {
 		return Job{}, fmt.Errorf("format %q is not configured for printer", format)
 	}
 	j := Job{ID: ID(), PrinterID: printerID, Owner: owner, Title: title, Format: format, State: "queued", CreatedAt: now(), UpdatedAt: now()}

@@ -229,13 +229,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		respond(w, nil, err)
 		return
 	}
-	allowed := false
-	for _, f := range p.Formats {
-		if f == format {
-			allowed = true
-		}
-	}
-	if !allowed {
+	if !queue.Accepts(p, format) {
 		http.Error(w, "document format not accepted by printer", 415)
 		return
 	}
