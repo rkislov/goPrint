@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Кислов Роман Сергеевич
+
 // goprintd serves the local administrator API and processes durable print jobs.
 package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,12 +19,22 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rkislov/goPrint/internal/audit"
 	"github.com/rkislov/goPrint/internal/backend"
+	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/queue"
+	"github.com/rkislov/goPrint/internal/scanning"
 	"github.com/rkislov/goPrint/internal/server"
+	"github.com/rkislov/goPrint/internal/watermark"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--watermark-worker" {
+		if err := watermark.RunWorker(os.Stdin, os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		slog.Error("goprintd stopped", "error", err)
 		os.Exit(1)
@@ -29,7 +43,10 @@ func main() {
 func run() error {
 	data := flag.String("data", "./var/goprint", "private data directory")
 	listen := flag.String("listen", "127.0.0.1:8631", "loopback HTTP address")
+	cert := flag.String("tls-cert", "", "HTTPS certificate PEM file")
+	key := flag.String("tls-key", "", "HTTPS private key PEM file")
 	workers := flag.Int("workers", 4, "delivery workers (1–50)")
+	preload := flag.Bool("preload-ppds", true, "download OpenPrinting PPD catalog on first start")
 	flag.Parse()
 	token := os.Getenv("GOPRINT_TOKEN")
 	if len(token) < 32 {
@@ -40,8 +57,11 @@ func run() error {
 		return err
 	}
 	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("first version requires an explicit loopback listen address")
+	if (*cert == "") != (*key == "") {
+		return errors.New("tls-cert and tls-key must be provided together")
+	}
+	if (ip == nil || !ip.IsLoopback()) && *cert == "" {
+		return errors.New("non-loopback addresses require tls-cert and tls-key")
 	}
 	if *workers < 1 || *workers > 50 {
 		return errors.New("workers must be between 1 and 50")
@@ -67,8 +87,31 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	api := (&server.Server{Store: store, Token: token}).Handler()
-	srv := &http.Server{Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	catalog, err := drivers.Open(filepath.Join(*data, "ppds"))
+	if err != nil {
+		return err
+	}
+	catalogCtx, cancelCatalog := context.WithCancel(context.Background())
+	defer cancelCatalog()
+	if *preload && catalog.Status().Count == 0 {
+		catalog.StartSync(catalogCtx)
+	}
+	scans, err := scanning.Open(filepath.Join(*data, "scans"))
+	if err != nil {
+		return err
+	}
+	defer scans.Close()
+	mark, err := watermark.New(filepath.Join(*data, "watermarks"))
+	if err != nil {
+		return err
+	}
+	exporter := audit.New(store)
+	auditCtx, cancelAudit := context.WithCancel(context.Background())
+	auditDone := make(chan struct{})
+	go func() { defer close(auditDone); exporter.Run(auditCtx) }()
+	defer func() { cancelAudit(); <-auditDone }()
+	api := (&server.Server{Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
+	srv := &http.Server{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	stopClaims, cancelClaims := context.WithCancel(context.Background())
 	defer cancelClaims()
 	delivery, cancelDelivery := context.WithCancel(context.Background())
@@ -76,13 +119,38 @@ func run() error {
 	workersDone := make(chan struct{})
 	go func() {
 		store.Run(stopClaims, delivery, *workers, func(ctx context.Context, p queue.Printer, j queue.Job, path string) queue.DeliveryResult {
-			r := backend.Deliver(ctx, p, j, path)
+			policy := watermark.Default()
+			if err := store.Setting(ctx, "watermark", &policy); err != nil {
+				return queue.DeliveryResult{State: "failed", Detail: "cannot read watermark policy; document not sent"}
+			}
+			marked, cleanup, err := mark.PrepareIsolated(ctx, policy, j, path)
+			if err != nil {
+				return queue.DeliveryResult{State: "failed", Detail: err.Error()}
+			}
+			defer cleanup()
+			if policy.Enabled {
+				if err = store.RecordEvent(ctx, j.ID, "watermark applied; policy="+policy.Version); err != nil {
+					return queue.DeliveryResult{State: "failed", Detail: "cannot audit watermark; document not sent"}
+				}
+			}
+			info, err := os.Stat(marked)
+			if err != nil {
+				return queue.DeliveryResult{State: "failed", Detail: "cannot read prepared document"}
+			}
+			j.Size = info.Size()
+			r := backend.Deliver(ctx, p, j, marked)
 			return queue.DeliveryResult{State: r.State, Detail: r.Detail, RemoteID: r.RemoteID}
 		})
 		close(workersDone)
 	}()
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Serve(listener) }()
+	go func() {
+		if *cert != "" {
+			serveErr <- srv.ServeTLS(listener, *cert, *key)
+		} else {
+			serveErr <- srv.Serve(listener)
+		}
+	}()
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)

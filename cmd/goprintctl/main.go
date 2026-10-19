@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Кислов Роман Сергеевич
+
 // goprintctl calls the local GoPrint administrator API.
 package main
 

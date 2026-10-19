@@ -1,32 +1,94 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Кислов Роман Сергеевич
+
 // Package server exposes the local administrator API and a small web console.
 package server
 
 import (
-	"crypto/subtle"
+	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"mime"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/rkislov/goPrint/internal/audit"
 	"github.com/rkislov/goPrint/internal/backend"
+	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/queue"
+	"github.com/rkislov/goPrint/internal/scanning"
+	"github.com/rkislov/goPrint/internal/watermark"
 )
 
 type Server struct {
-	Store *queue.Store
-	Token string
+	Store      *queue.Store
+	Token      string
+	Catalog    *drivers.Catalog
+	Filters    *drivers.FilterManager
+	Audit      *audit.Exporter
+	Scans      *scanning.Service
+	Background context.Context
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	assets, _ := fs.Sub(web, "web")
+	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		io.WriteString(w, console)
+		target := "/login"
+		if s.authorized(r) {
+			target = "/print"
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
+	page := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/login" && !s.authorized(r) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		b, _ := web.ReadFile("web/index.html")
+		w.Write(b)
+	}
+	mux.HandleFunc("GET /login", page)
+	mux.HandleFunc("GET /print", page)
+	mux.HandleFunc("GET /settings", page)
+	mux.HandleFunc("GET /scan", page)
+	mux.HandleFunc("GET /watermarks", page)
+	mux.HandleFunc("/inbox/{scanner}/{file...}", s.inbox)
+	mux.HandleFunc("/inbox/{scanner}", s.inbox)
+	mux.HandleFunc("POST /api/session", s.login)
 	api := http.NewServeMux()
+	s.scanRoutes(api)
+	s.filterRoutes(api)
+	s.policyRoutes(api)
+	api.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) {
+		respond(w, map[string]string{"user": "Администратор"}, nil)
+	})
+	api.HandleFunc("DELETE /api/session", s.logout)
+	api.HandleFunc("GET /api/drivers", func(w http.ResponseWriter, r *http.Request) {
+		if s.Catalog == nil {
+			http.Error(w, "catalog unavailable", 503)
+			return
+		}
+		respond(w, map[string]any{"profiles": s.Catalog.Search(r.URL.Query().Get("q"), r.URL.Query().Get("manufacturer")), "manufacturers": s.Catalog.Manufacturers(), "status": s.Catalog.Status()}, nil)
+	})
+	api.HandleFunc("POST /api/drivers/sync", func(w http.ResponseWriter, r *http.Request) {
+		if s.Catalog == nil {
+			http.Error(w, "catalog unavailable", 503)
+			return
+		}
+		ctx := s.Background
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		started := s.Catalog.StartSync(ctx)
+		respond(w, map[string]bool{"started": started}, nil)
+	})
 	api.HandleFunc("GET /api/printers", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.Store.Printers(r.Context())
 		respond(w, v, err)
@@ -48,7 +110,7 @@ func (s *Server) Handler() http.Handler {
 		respond(w, v, err)
 	})
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.Token)) != 1 {
+		if !s.authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -59,9 +121,9 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'")
 		// Block browser requests from other origins, including requests through DNS rebinding.
-		if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host {
+		if origin := r.Header.Get("Origin"); origin != "" && origin != requestOrigin(r) {
 			http.Error(w, "origin rejected", http.StatusForbidden)
 			return
 		}
@@ -116,6 +178,16 @@ func (s *Server) addPrinter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+	if p.PPDID != "" {
+		if s.Catalog == nil {
+			http.Error(w, "catalog unavailable", 503)
+			return
+		}
+		if _, ok := s.Catalog.Find(p.PPDID); !ok {
+			http.Error(w, "PPD profile not found", 400)
+			return
+		}
+	}
 	v, err := s.Store.AddPrinter(r.Context(), p)
 	respond(w, v, err)
 }
@@ -141,6 +213,15 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(title) > 255 || strings.ContainsAny(title, "\r\n\x00") {
 		http.Error(w, "invalid title", 400)
+		return
+	}
+	policy := watermark.Default()
+	if err := s.Store.Setting(r.Context(), "watermark", &policy); err != nil {
+		respond(w, nil, err)
+		return
+	}
+	if policy.Enabled && format != "application/pdf" {
+		http.Error(w, "Обязательный watermark поддерживает только PDF", 415)
 		return
 	}
 	p, err := s.Store.Printer(r.Context(), r.URL.Query().Get("printer"))
@@ -180,17 +261,13 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 }
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
-const console = `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>GoPrint</title>
-<style>body{font:16px system-ui;max-width:1050px;margin:40px auto;padding:0 20px;color:#202428;background:#f7f8fa}input,select,button{font:inherit;padding:9px;margin:4px 0}button{cursor:pointer}label{display:block;margin-top:10px}section{margin:30px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:white;padding:15px}small{display:block}#status{min-height:24px}li{margin:12px 0}a{color:inherit}</style>
-<h1>GoPrint</h1><p>Локальная консоль администратора · первая версия</p><label>Токен администратора <input id="token" type="password" autocomplete="off"></label><button id="connect">Подключиться / обновить</button><small>Токен хранится только в памяти страницы. Обновление данных — вручную.</small><p id="status" role="status"></p>
-<section><h2>Добавить принтер</h2><form id="printer"><label>Имя <input id="name" required maxlength="128"></label><label>URI <input id="uri" placeholder="ipp://printer:631/ipp/print" required size="40"></label><label>Формат документа <select id="format"><option>application/pdf</option><option>application/octet-stream</option><option>application/postscript</option><option>image/pwg-raster</option><option>image/jpeg</option></select></label><button>Добавить</button></form><small>Конвертация отсутствует: принтер должен поддерживать выбранный формат.</small></section>
-<section><h2>Принтеры</h2><ul id="printers"></ul></section>
-<section><h2>Отправить документ</h2><form id="upload"><label>Принтер <select id="target" required></select></label><label>Файл <input id="file" type="file" required></label><label>Тип содержимого <select id="content"><option>application/pdf</option><option>application/octet-stream</option><option>application/postscript</option><option>image/pwg-raster</option><option>image/jpeg</option></select></label><button>В очередь</button></form></section>
-<section><h2>Задания</h2><small>submitted — передано устройству; unknown — результат неизвестен, проверьте принтер перед повторной отправкой. Отмена доступна для queued.</small><ul id="jobs"></ul></section>
-<script>
-const el=id=>document.getElementById(id);
-async function api(path,options={}){const r=await fetch('/api/'+path,{...options,headers:{Authorization:'Bearer '+el('token').value,...options.headers}});if(!r.ok)throw Error(await r.text());return r.json()}
-function run(fn){return async e=>{e.preventDefault();try{el('status').textContent='Выполняется…';await fn();el('status').textContent='Готово'}catch(err){el('status').textContent=err.message}}}
-async function refresh(){const ps=await api('printers');el('printers').replaceChildren();el('target').replaceChildren();for(const p of ps){const li=document.createElement('li');li.textContent=p.name+' · '+p.uri+' · '+(p.paused?'пауза':'активен')+' ';const b=document.createElement('button');b.textContent=p.paused?'Возобновить':'Пауза';b.onclick=run(async()=>{await api('printers/'+p.id+'/paused',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({paused:!p.paused})});await refresh()});li.append(b);el('printers').append(li);const o=document.createElement('option');o.value=p.id;o.textContent=p.name;el('target').append(o)}const js=await api('jobs');el('jobs').replaceChildren();for(const j of js){const li=document.createElement('li');li.textContent=j.title+' · '+j.state+' · '+j.size+' bytes · '+j.detail+' ';if(j.state==='queued'){const b=document.createElement('button');b.textContent='Отменить';b.onclick=run(async()=>{await api('jobs/'+j.id+'/cancel',{method:'POST'});await refresh()});li.append(b)}el('jobs').append(li)}}
-el('connect').onclick=run(refresh);el('printer').onsubmit=run(async()=>{await api('printers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:el('name').value,uri:el('uri').value,formats:[el('format').value]})});await refresh()});el('upload').onsubmit=run(async()=>{const f=el('file').files[0];await api('jobs?printer='+encodeURIComponent(el('target').value)+'&title='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':el('content').value},body:f});await refresh()});
-</script></html>`
+//go:embed web/*
+var web embed.FS
+
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
