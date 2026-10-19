@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/rkislov/goPrint/internal/audit"
+	"github.com/rkislov/goPrint/internal/auth"
 	"github.com/rkislov/goPrint/internal/backend"
 	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/queue"
@@ -25,13 +26,17 @@ import (
 )
 
 type Server struct {
-	Store      *queue.Store
-	Token      string
-	Catalog    *drivers.Catalog
-	Filters    *drivers.FilterManager
-	Audit      *audit.Exporter
-	Scans      *scanning.Service
-	Background context.Context
+	PublicURL   string
+	Domain      auth.Authenticator
+	limiter     loginLimiter
+	credentials credentialCache
+	Store       *queue.Store
+	Token       string
+	Catalog     *drivers.Catalog
+	Filters     *drivers.FilterManager
+	Audit       *audit.Exporter
+	Scans       *scanning.Service
+	Background  context.Context
 }
 
 func (s *Server) Handler() http.Handler {
@@ -59,15 +64,23 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /settings", page)
 	mux.HandleFunc("GET /scan", page)
 	mux.HandleFunc("GET /watermarks", page)
+	mux.HandleFunc("GET /clients", page)
 	mux.HandleFunc("/inbox/{scanner}/{file...}", s.inbox)
 	mux.HandleFunc("/inbox/{scanner}", s.inbox)
 	mux.HandleFunc("POST /api/session", s.login)
+	mux.HandleFunc("POST /ipp/printers/{id}", s.ipp)
+	mux.HandleFunc("POST /ipp/printers/{id}/jobs/{job}", s.ipp)
+	mux.HandleFunc("GET /api/auth/options", func(w http.ResponseWriter, r *http.Request) {
+		respond(w, map[string]bool{"domain": s.Domain != nil}, nil)
+	})
 	api := http.NewServeMux()
 	s.scanRoutes(api)
 	s.filterRoutes(api)
 	s.policyRoutes(api)
+	s.clientRoutes(api)
 	api.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) {
-		respond(w, map[string]string{"user": "Администратор"}, nil)
+		id, _ := s.identity(r)
+		respond(w, id, nil)
 	})
 	api.HandleFunc("DELETE /api/session", s.logout)
 	api.HandleFunc("GET /api/drivers", func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +88,20 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "catalog unavailable", 503)
 			return
 		}
-		respond(w, map[string]any{"profiles": s.Catalog.Search(r.URL.Query().Get("q"), r.URL.Query().Get("manufacturer")), "manufacturers": s.Catalog.Manufacturers(), "status": s.Catalog.Status()}, nil)
+		respond(w, map[string]any{"profiles": s.Catalog.Search(r.URL.Query().Get("q"), r.URL.Query().Get("manufacturer")), "manufacturers": s.Catalog.Manufacturers(), "status": s.Catalog.Status(), "katusha": s.Catalog.KatushaStatus()}, nil)
+	})
+	api.HandleFunc("GET /api/drivers/katusha/packages/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if s.Catalog == nil {
+			http.NotFound(w, r)
+			return
+		}
+		p, err := s.Catalog.KatushaPackage(r.PathValue("name"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="`+r.PathValue("name")+`"`)
+		http.ServeFile(w, r, p)
 	})
 	api.HandleFunc("POST /api/drivers/sync", func(w http.ResponseWriter, r *http.Request) {
 		if s.Catalog == nil {
@@ -87,6 +113,7 @@ func (s *Server) Handler() http.Handler {
 			ctx = context.Background()
 		}
 		started := s.Catalog.StartSync(ctx)
+		s.Catalog.StartKatushaSync(ctx)
 		respond(w, map[string]bool{"started": started}, nil)
 	})
 	api.HandleFunc("GET /api/printers", func(w http.ResponseWriter, r *http.Request) {
@@ -95,23 +122,36 @@ func (s *Server) Handler() http.Handler {
 	})
 	api.HandleFunc("POST /api/printers", s.addPrinter)
 	api.HandleFunc("PUT /api/printers/{id}/paused", s.pause)
-	api.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) { v, err := s.Store.Jobs(r.Context()); respond(w, v, err) })
+	api.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) { v, err := s.visibleJobs(r); respond(w, v, err) })
 	api.HandleFunc("GET /api/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !s.ownJob(w, r, r.PathValue("id")) {
+			return
+		}
 		v, err := s.Store.Job(r.Context(), r.PathValue("id"))
 		respond(w, v, err)
 	})
 	api.HandleFunc("POST /api/jobs", s.submit)
 	api.HandleFunc("POST /api/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
-		err := s.Store.Cancel(r.Context(), r.PathValue("id"))
+		if !s.ownJob(w, r, r.PathValue("id")) {
+			return
+		}
+		err := s.Store.CancelIPP(r.Context(), r.PathValue("id"))
 		respond(w, map[string]string{"state": "canceled"}, err)
 	})
 	api.HandleFunc("GET /api/jobs/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		if !s.ownJob(w, r, r.PathValue("id")) {
+			return
+		}
 		v, err := s.Store.Events(r.Context(), r.PathValue("id"))
 		respond(w, v, err)
 	})
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !s.permitAPI(r) {
+			http.Error(w, "administrator access required", 403)
 			return
 		}
 		api.ServeHTTP(w, r)
@@ -238,7 +278,8 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// LimitReader in Store also protects chunked requests without Content-Length.
-	j, err := s.Store.Submit(r.Context(), p.ID, "local-admin", title, format, r.Body)
+	identity, _ := s.identity(r)
+	j, err := s.Store.Submit(r.Context(), p.ID, identity.User, title, format, r.Body)
 	if err != nil {
 		if errors.Is(err, queue.ErrTooLarge) {
 			respond(w, nil, err)

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/rkislov/goPrint/internal/audit"
+	"github.com/rkislov/goPrint/internal/auth"
 	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/filtering"
 	"github.com/rkislov/goPrint/internal/printing"
@@ -43,6 +44,8 @@ func main() {
 	}
 }
 func run() error {
+	publicURL := flag.String("public-url", "", "canonical HTTPS origin used by client provisioning and IPP")
+	domainConfig := flag.String("domain-config", "", "AD/Samba LDAPS or StartTLS JSON configuration")
 	data := flag.String("data", "./var/goprint", "private data directory")
 	listen := flag.String("listen", "127.0.0.1:8631", "loopback HTTP address")
 	cert := flag.String("tls-cert", "", "HTTPS certificate PEM file")
@@ -58,6 +61,17 @@ func run() error {
 	}
 	if *filterLimit < 1 || *filterLimit > 4096 {
 		return errors.New("filter-output-mib must be between 1 and 4096")
+	}
+	if err := server.ValidatePublicURL(*publicURL); err != nil {
+		return err
+	}
+	var domain auth.Authenticator
+	if *domainConfig != "" {
+		var err error
+		domain, err = auth.Load(*domainConfig)
+		if err != nil {
+			return fmt.Errorf("domain config: %w", err)
+		}
 	}
 	token := os.Getenv("GOPRINT_TOKEN")
 	if len(token) < 32 {
@@ -104,8 +118,11 @@ func run() error {
 	}
 	catalogCtx, cancelCatalog := context.WithCancel(context.Background())
 	defer cancelCatalog()
-	if *preload && catalog.Status().Count == 0 {
+	if *preload && catalog.Status().SHA256 == "" {
 		catalog.StartSync(catalogCtx)
+	}
+	if *preload && catalog.KatushaStatus().Count == 0 {
+		catalog.StartKatushaSync(catalogCtx)
 	}
 	scans, err := scanning.Open(filepath.Join(*data, "scans"))
 	if err != nil {
@@ -126,7 +143,7 @@ func run() error {
 	auditDone := make(chan struct{})
 	go func() { defer close(auditDone); exporter.Run(auditCtx) }()
 	defer func() { cancelAudit(); <-auditDone }()
-	api := (&server.Server{Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
+	api := (&server.Server{PublicURL: *publicURL, Domain: domain, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
 	srv := &http.Server{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	stopClaims, cancelClaims := context.WithCancel(context.Background())
 	defer cancelClaims()

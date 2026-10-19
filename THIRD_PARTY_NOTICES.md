@@ -28,3 +28,11 @@ GoPrint: Copyright 2026 Кислов Роман Сергеевич. Apache Licen
 - Roboto-Regular: [NOTICE](third_party/Roboto/NOTICE), [LICENSE](third_party/Roboto/LICENSE)
 
 PPDs and Linux driver packages are downloaded separately to the private data directory. The original OpenPrinting source archive is retained with its license material. Driver packages retain upstream and distribution copyright files. They are not covered by the GoPrint Apache license.
+
+- github.com/Azure/go-ntlmssp: [LICENSE](third_party/github.com__Azure__go-ntlmssp/LICENSE)
+
+- github.com/go-asn1-ber/asn1-ber: [LICENSE](third_party/github.com__go-asn1-ber__asn1-ber/LICENSE)
+
+- github.com/go-ldap/ldap/v3: [LICENSE](third_party/github.com__go-ldap__ldap__v3/LICENSE)
+
+- github.com/ulikunitz/xz: [LICENSE](third_party/github.com__ulikunitz__xz/LICENSE)

@@ -88,6 +88,8 @@ func Open(dir string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS printers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, uri TEXT NOT NULL, formats TEXT NOT NULL, paused INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS printer_profiles (printer_id TEXT PRIMARY KEY REFERENCES printers(id), ppd_id TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, printer_id TEXT NOT NULL REFERENCES printers(id), owner TEXT NOT NULL, title TEXT NOT NULL, format TEXT NOT NULL, size INTEGER NOT NULL, state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', remote_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS ipp_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT CHECK(id<=2147483647),job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id));
+ INSERT INTO ipp_jobs(job_id) SELECT id FROM jobs WHERE NOT EXISTS(SELECT 1 FROM ipp_jobs WHERE job_id=jobs.id) ORDER BY created_at,id;
  CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state,created_at);
  CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, job_id TEXT NOT NULL REFERENCES jobs(id), state TEXT NOT NULL, detail TEXT NOT NULL, at TEXT NOT NULL);`)
 	if err != nil {
@@ -105,9 +107,9 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	_, err = tx.Exec(`INSERT INTO events(job_id,state,detail,at) SELECT id,'unknown','server stopped during delivery',? FROM jobs WHERE state='processing'`, now())
+	_, err = tx.Exec(`INSERT INTO events(job_id,state,detail,at) SELECT id,'unknown','server stopped during delivery',? FROM jobs WHERE state IN ('processing','receiving')`, now())
 	if err == nil {
-		_, err = tx.Exec(`UPDATE jobs SET state='unknown',detail='server stopped during delivery; verify printer before resubmitting',updated_at=? WHERE state='processing'`, now())
+		_, err = tx.Exec(`UPDATE jobs SET state='unknown',detail='server stopped during delivery; verify printer before resubmitting',updated_at=? WHERE state IN ('processing','receiving')`, now())
 	}
 	if err == nil {
 		err = tx.Commit()
@@ -185,6 +187,9 @@ func (s *Store) Pause(ctx context.Context, id string, paused bool) error {
 	return nil
 }
 func (s *Store) Submit(ctx context.Context, printerID, owner, title, format string, r io.Reader) (Job, error) {
+	return s.submit(ctx, printerID, owner, title, format, r, "")
+}
+func (s *Store) submit(ctx context.Context, printerID, owner, title, format string, r io.Reader, reserved string) (Job, error) {
 	p, err := s.Printer(ctx, printerID)
 	if err != nil {
 		return Job{}, err
@@ -193,6 +198,17 @@ func (s *Store) Submit(ctx context.Context, printerID, owner, title, format stri
 		return Job{}, fmt.Errorf("format %q is not configured for printer", format)
 	}
 	j := Job{ID: ID(), PrinterID: printerID, Owner: owner, Title: title, Format: format, State: "queued", CreatedAt: now(), UpdatedAt: now()}
+	if reserved != "" {
+		existing, err := s.Job(ctx, reserved)
+		if err != nil {
+			return Job{}, err
+		}
+		if existing.Owner != owner || existing.PrinterID != printerID || existing.State != "receiving" {
+			return Job{}, ErrConflict
+		}
+		j.ID = reserved
+		j.CreatedAt = existing.CreatedAt
+	}
 	f, err := os.CreateTemp(s.spool, ".upload-")
 	if err != nil {
 		return Job{}, err
@@ -237,7 +253,21 @@ func (s *Store) Submit(ctx context.Context, printerID, owner, title, format stri
 		return Job{}, err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO jobs(id,printer_id,owner,title,format,size,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, j.ID, j.PrinterID, j.Owner, j.Title, j.Format, j.Size, j.State, j.CreatedAt, j.UpdatedAt)
+	if reserved == "" {
+		_, err = tx.ExecContext(ctx, `INSERT INTO jobs(id,printer_id,owner,title,format,size,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, j.ID, j.PrinterID, j.Owner, j.Title, j.Format, j.Size, j.State, j.CreatedAt, j.UpdatedAt)
+	} else {
+		var result sql.Result
+		result, err = tx.ExecContext(ctx, `UPDATE jobs SET format=?,size=?,state='queued',detail='',updated_at=? WHERE id=? AND state='receiving'`, j.Format, j.Size, j.UpdatedAt, j.ID)
+		if err == nil {
+			n, _ := result.RowsAffected()
+			if n != 1 {
+				err = ErrConflict
+			}
+		}
+	}
+	if err == nil && reserved == "" {
+		_, err = tx.ExecContext(ctx, `INSERT INTO ipp_jobs(job_id) VALUES(?)`, j.ID)
+	}
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `INSERT INTO events(job_id,state,detail,at) VALUES(?,'queued','accepted',?)`, j.ID, now())
 	}
@@ -362,4 +392,82 @@ func (s *Store) Events(ctx context.Context, id string) ([]Event, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// JobsFor filters in SQL before applying the limit, so other owners cannot crowd out a user's jobs.
+func (s *Store) JobsFor(ctx context.Context, owner string, admin bool) ([]Job, error) {
+	if admin {
+		return s.Jobs(ctx)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE owner=? ORDER BY created_at DESC LIMIT 200`, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Job{}
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) IPPNumber(ctx context.Context, id string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM ipp_jobs WHERE job_id=?`, id).Scan(&n)
+	return n, err
+}
+func (s *Store) IPPJob(ctx context.Context, n int) (Job, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT job_id FROM ipp_jobs WHERE id=?`, n).Scan(&id)
+	if err != nil {
+		return Job{}, ErrNotFound
+	}
+	return s.Job(ctx, id)
+}
+
+// ReserveIPP persists Create-Job without making an empty document deliverable.
+func (s *Store) ReserveIPP(ctx context.Context, printer, owner, title, format string) (Job, error) {
+	j := Job{ID: ID(), PrinterID: printer, Owner: owner, Title: title, Format: format, State: "held", CreatedAt: now(), UpdatedAt: now()}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return j, err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO jobs(id,printer_id,owner,title,format,size,state,created_at,updated_at) VALUES(?,?,?,?,?,0,'held',?,?)`, j.ID, printer, owner, title, format, j.CreatedAt, j.UpdatedAt)
+	if err != nil {
+		return j, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO ipp_jobs(job_id) VALUES(?)`, j.ID)
+	if err != nil {
+		return j, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO events(job_id,state,detail,at) VALUES(?,'held','IPP job created; waiting for document',?)`, j.ID, now())
+	if err != nil {
+		return j, err
+	}
+	return j, tx.Commit()
+}
+func (s *Store) SendIPP(ctx context.Context, j Job, format string, r io.Reader) (Job, error) {
+	if err := s.transition(ctx, j.ID, "held", "receiving", "receiving IPP document", ""); err != nil {
+		return Job{}, err
+	}
+	result, err := s.submit(ctx, j.PrinterID, j.Owner, j.Title, format, r, j.ID)
+	if err != nil {
+		s.transition(context.WithoutCancel(ctx), j.ID, "receiving", "failed", "IPP document receive failed; verify before retrying", "")
+	}
+	return result, err
+}
+func (s *Store) CancelIPP(ctx context.Context, id string) error {
+	j, err := s.Job(ctx, id)
+	if err != nil {
+		return err
+	}
+	if j.State == "held" {
+		return s.transition(ctx, id, "held", "canceled", "canceled by user", "")
+	}
+	return s.Cancel(ctx, id)
 }

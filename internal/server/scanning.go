@@ -47,7 +47,8 @@ func (s *Server) scanRoutes(api *http.ServeMux) {
 			http.Error(w, "scanning unavailable", 503)
 			return
 		}
-		v, err := s.Scans.Jobs(r.Context())
+		identity, _ := s.identity(r)
+		v, err := s.Scans.JobsFor(r.Context(), identity.User, identity.Admin)
 		respond(w, v, err)
 	})
 	api.HandleFunc("POST /api/scans", func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +60,8 @@ func (s *Server) scanRoutes(api *http.ServeMux) {
 		if !decode(w, r, &o) {
 			return
 		}
+		identity, _ := s.identity(r)
+		o.Owner = identity.User
 		v, err := s.Scans.Start(r.Context(), o)
 		if err != nil {
 			if errors.Is(err, queue.ErrConflict) || errors.Is(err, queue.ErrNotFound) {
@@ -78,6 +81,11 @@ func (s *Server) scanRoutes(api *http.ServeMux) {
 		j, err := s.Scans.Job(r.Context(), r.PathValue("id"))
 		if err != nil {
 			respond(w, nil, err)
+			return
+		}
+		identity, _ := s.identity(r)
+		if !identity.Admin && j.Owner != identity.User {
+			http.Error(w, "scan not found", 404)
 			return
 		}
 		if j.State != "completed" {

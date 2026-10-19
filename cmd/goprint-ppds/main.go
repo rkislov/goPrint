@@ -12,6 +12,7 @@ import (
 
 func main() {
 	dir := flag.String("dir", "./var/goprint/ppds", "catalog directory")
+	vendor := flag.Bool("katusha", false, "import official Katusha ZIP instead of OpenPrinting tar.gz")
 	archive := flag.String("archive", "", "local OpenPrinting .tar.gz archive")
 	version := flag.Bool("version", false, "print build version")
 	flag.Parse()
@@ -23,7 +24,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "specify -archive PATH")
 		os.Exit(1)
 	}
-	if err := run(*dir, *archive); err != nil {
+	var importErr error
+	if *vendor {
+		c, e := drivers.Open(*dir)
+		importErr = e
+		if e == nil {
+			var b []byte
+			b, importErr = os.ReadFile(*archive)
+			if importErr == nil {
+				importErr = c.ImportKatusha(b)
+			}
+		}
+	} else {
+		importErr = run(*dir, *archive)
+	}
+	if err := importErr; err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
