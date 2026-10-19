@@ -29,6 +29,7 @@ import (
 	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/filtering"
 	"github.com/rkislov/goPrint/internal/maildelivery"
+	"github.com/rkislov/goPrint/internal/monitoring"
 	"github.com/rkislov/goPrint/internal/personal"
 	"github.com/rkislov/goPrint/internal/printing"
 	"github.com/rkislov/goPrint/internal/queue"
@@ -190,7 +191,15 @@ func run() error {
 	auditDone := make(chan struct{})
 	go func() { defer close(auditDone); exporter.Run(auditCtx) }()
 	defer func() { cancelAudit(); <-auditDone }()
-	api := (&server.Server{Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
+	monitorService, err := monitoring.New(*data, store, mailService)
+	if err != nil {
+		return err
+	}
+	monitorCtx, cancelMonitor := context.WithCancel(context.Background())
+	monitorDone := make(chan struct{})
+	go func() { defer close(monitorDone); monitorService.Run(monitorCtx) }()
+	defer func() { cancelMonitor(); <-monitorDone }()
+	api := (&server.Server{Monitoring: monitorService, Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
 	srv := &http.Server{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 256 << 10}
 	stopClaims, cancelClaims := context.WithCancel(context.Background())
 	defer cancelClaims()

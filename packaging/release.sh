@@ -19,7 +19,7 @@ for arch in amd64 arm64; do
  cp LICENSE NOTICE THIRD_PARTY_NOTICES.md README.md "$root/"
  cp -R third_party "$root/"
  cp packaging/postgresql-init.sql packaging/sqlite-to-postgresql.sh "$root/packaging/"
- cp docs/POSTGRESQL.md "$root/docs/"
+ cp docs/POSTGRESQL.md docs/MONITORING.md "$root/docs/"
  cp packaging/goprint.service packaging/domain.example.json packaging/domain-sso.example.json "$root/packaging/"
  cp docs/ADMINISTRATOR.md docs/USER.md docs/DOMAIN-AND-CLIENTS.md docs/BETA-OPERATIONS.md "$root/docs/"
  cp -R docs/images "$root/docs/"
