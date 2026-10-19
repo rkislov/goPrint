@@ -50,6 +50,7 @@ func TestDomainOwnershipAndAdminBoundary(t *testing.T) {
 	bob := domainCookie(t, h, "bob@example.org")
 	admin := domainCookie(t, h, "admin@example.org")
 	p, err := store.AddPrinter(context.Background(), queue.Printer{Name: "test", URI: "socket://127.0.0.1:9100", Formats: []string{"application/pdf"}, Paused: true})
+	store.SetAccess(context.Background(), p.ID, queue.PrinterAccess{Public: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +126,7 @@ func TestProvisioningQuotesNamesAndDoesNotBypassQueue(t *testing.T) {
 	}
 	defer st.Close()
 	p, _ := st.AddPrinter(context.Background(), queue.Printer{Name: "test '; $(touch /tmp/bad)\n", URI: "socket://192.0.2.1:9100", Formats: []string{"application/pdf"}})
+	st.SetAccess(context.Background(), p.ID, queue.PrinterAccess{Public: true})
 	s := &Server{Store: st, Token: strings.Repeat("x", 32), PublicURL: "https://print.example.org:8631"}
 	h := s.Handler()
 	for _, platform := range []string{"linux.sh", "windows.ps1"} {

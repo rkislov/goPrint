@@ -43,6 +43,10 @@ PPDs and Linux driver packages are downloaded separately to the private data dir
 
 - github.com/google/pprof: [LICENSE](third_party/github.com__google__pprof/LICENSE)
 
+- github.com/gorilla/securecookie: [LICENSE](third_party/github.com__gorilla__securecookie/LICENSE)
+
+- github.com/gorilla/sessions: [LICENSE](third_party/github.com__gorilla__sessions/LICENSE)
+
 - github.com/hashicorp/go-uuid: [LICENSE](third_party/github.com__hashicorp__go-uuid/LICENSE)
 
 - github.com/jackc/pgpassfile: [LICENSE](third_party/github.com__jackc__pgpassfile/LICENSE)
@@ -104,3 +108,5 @@ PPDs and Linux driver packages are downloaded separately to the private data dir
 - modernc.org/strutil: [LICENSE](third_party/modernc.org__strutil/LICENSE)
 
 - modernc.org/token: [LICENSE](third_party/modernc.org__token/LICENSE)
+
+- Go runtime: [LICENSE](third_party/Go/LICENSE), [PATENTS](third_party/Go/PATENTS)

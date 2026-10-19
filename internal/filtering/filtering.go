@@ -126,7 +126,22 @@ func (e *Engine) prepare(ctx context.Context, p queue.Printer, j queue.Job, inpu
 	// Preserve helper search paths, but do not inherit admin/device tokens, proxy
 	// credentials, loader overrides or CUPS environment overrides from the daemon.
 	env := []string{"PATH=" + os.Getenv("PATH"), "LANG=C", "LC_ALL=C", "TMPDIR=" + absoluteDir, "RIP_MAX_CACHE=128m"}
-	args := []string{"-p", ppd, "-i", j.Format, "-m", "printer/goprint", "-e", "-U", j.Owner, "-t", "GoPrint " + j.ID, "-n", "1", "--", absolute}
+	var selected []string
+	if j.Options != (queue.PrintOptions{}) {
+		caps, err := drivers.CapabilitiesFor(data)
+		if err != nil {
+			return r, err
+		}
+		selected, err = caps.CUPSOptions(j.Options)
+		if err != nil {
+			return r, err
+		}
+	}
+	args := []string{"-p", ppd, "-i", j.Format, "-m", "printer/goprint", "-e", "-U", j.Owner, "-t", "GoPrint " + j.ID, "-n", "1"}
+	for _, option := range selected {
+		args = append(args, "-o", option)
+	}
+	args = append(args, "--", absolute)
 	var plan bytes.Buffer
 	if _, err = run(ctx, program, append([]string{"--list-filters"}, args...), env, absoluteDir, &plan, 64<<10); err != nil {
 		return r, fmt.Errorf("не удалось построить цепочку PPD%s; проверьте установку драйверов и MIME-фильтров", spec.required())

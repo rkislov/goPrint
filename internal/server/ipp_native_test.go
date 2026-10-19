@@ -29,6 +29,7 @@ func TestNativeCUPSIPPClient(t *testing.T) {
 	}
 	defer st.Close()
 	p, _ := st.AddPrinter(context.Background(), queue.Printer{Name: "Native IPP", URI: "socket://127.0.0.1:9100", Formats: []string{"application/pdf"}, Paused: true})
+	st.SetAccess(context.Background(), p.ID, queue.PrinterAccess{Public: true})
 	token := strings.Repeat("native-test-only", 3)
 	srv := httptest.NewServer((&Server{Store: st, Token: token}).Handler())
 	defer srv.Close()
@@ -100,6 +101,7 @@ func TestLinuxDriverlessGeneratesPPD(t *testing.T) {
 	}
 	defer st.Close()
 	p, _ := st.AddPrinter(context.Background(), queue.Printer{Name: "Driverless PDF queue", URI: "socket://127.0.0.1:9100", Formats: []string{"application/pdf"}, Paused: true})
+	st.SetAccess(context.Background(), p.ID, queue.PrinterAccess{Public: true})
 	srv := httptest.NewServer((&Server{Store: st, Token: strings.Repeat("q", 32)}).Handler())
 	defer srv.Close()
 	uri := strings.Replace(srv.URL, "http://", "ipp://", 1) + "/ipp/printers/" + p.ID

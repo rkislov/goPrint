@@ -65,7 +65,7 @@ func Run(ctx context.Context, dir, dsn string, execute bool) (report Report, err
 		tables            []string
 	}{
 		{"goprint_queue", filepath.Join(dir, "queue.db"), queue.Schema, []string{"settings", "printers", "printer_profiles", "jobs", "job_options", "ipp_jobs", "events"}},
-		{"goprint_scans", filepath.Join(dir, "scans", "scans.db"), scanning.Schema, []string{"scanners", "scan_owners", "scans"}},
+		{"goprint_scans", filepath.Join(dir, "scans", "scans.db"), scanning.Schema, []string{"scanners", "scan_owners", "scans", "scan_delivery"}},
 	}
 	// An existing schema, even with empty tables, may belong to another installation.
 	var count int

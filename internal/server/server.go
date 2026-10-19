@@ -15,19 +15,28 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/rkislov/goPrint/internal/antivirus"
 	"github.com/rkislov/goPrint/internal/audit"
 	"github.com/rkislov/goPrint/internal/auth"
 	"github.com/rkislov/goPrint/internal/backend"
 	"github.com/rkislov/goPrint/internal/drivers"
+	"github.com/rkislov/goPrint/internal/maildelivery"
+	"github.com/rkislov/goPrint/internal/personal"
 	"github.com/rkislov/goPrint/internal/queue"
 	"github.com/rkislov/goPrint/internal/scanning"
 	"github.com/rkislov/goPrint/internal/watermark"
 )
 
 type Server struct {
+	Antivirus   *antivirus.Service
+	emailMu     sync.Mutex
+	Personal    *personal.Service
+	Mail        *maildelivery.Service
 	PublicURL   string
 	Domain      auth.Authenticator
+	SSO         auth.Negotiator
 	limiter     loginLimiter
 	credentials credentialCache
 	Store       *queue.Store
@@ -65,19 +74,32 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /scan", page)
 	mux.HandleFunc("GET /watermarks", page)
 	mux.HandleFunc("GET /clients", page)
+	mux.HandleFunc("GET /printers", page)
+	mux.HandleFunc("GET /profile", page)
+	mux.HandleFunc("GET /mail", page)
+	mux.HandleFunc("GET /security", page)
+	mux.HandleFunc("GET /protection", page)
+	mux.HandleFunc("POST /terminal/{id}/release", s.terminalRelease)
+	mux.HandleFunc("POST /mail/incoming", s.incomingEmail)
 	mux.HandleFunc("/inbox/{scanner}/{file...}", s.inbox)
 	mux.HandleFunc("/inbox/{scanner}", s.inbox)
 	mux.HandleFunc("POST /api/session", s.login)
+	mux.HandleFunc("POST /api/session/negotiate", s.loginSSO)
 	mux.HandleFunc("POST /ipp/printers/{id}", s.ipp)
 	mux.HandleFunc("POST /ipp/printers/{id}/jobs/{job}", s.ipp)
 	mux.HandleFunc("GET /api/auth/options", func(w http.ResponseWriter, r *http.Request) {
-		respond(w, map[string]bool{"domain": s.Domain != nil}, nil)
+		respond(w, map[string]bool{"domain": s.Domain != nil, "sso": s.SSO != nil}, nil)
 	})
 	api := http.NewServeMux()
 	s.scanRoutes(api)
 	s.filterRoutes(api)
 	s.policyRoutes(api)
 	s.clientRoutes(api)
+	s.printerRoutes(api)
+	s.personalRoutes(api)
+	s.ssoRoutes(api)
+	s.emailRoutes(api)
+	s.antivirusRoutes(api)
 	api.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) {
 		id, _ := s.identity(r)
 		respond(w, id, nil)
@@ -117,7 +139,7 @@ func (s *Server) Handler() http.Handler {
 		respond(w, map[string]bool{"started": started}, nil)
 	})
 	api.HandleFunc("GET /api/printers", func(w http.ResponseWriter, r *http.Request) {
-		v, err := s.Store.Printers(r.Context())
+		v, err := s.visiblePrinters(r)
 		respond(w, v, err)
 	})
 	api.HandleFunc("POST /api/printers", s.addPrinter)
@@ -264,9 +286,8 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Обязательный watermark поддерживает только PDF", 415)
 		return
 	}
-	p, err := s.Store.Printer(r.Context(), r.URL.Query().Get("printer"))
-	if err != nil {
-		respond(w, nil, err)
+	p, ok := s.permittedPrinter(w, r, r.URL.Query().Get("printer"))
+	if !ok {
 		return
 	}
 	if !queue.Accepts(p, format) {
@@ -279,7 +300,17 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	// LimitReader in Store also protects chunked requests without Content-Length.
 	identity, _ := s.identity(r)
-	j, err := s.Store.Submit(r.Context(), p.ID, identity.User, title, format, r.Body)
+	options, err := s.effectiveOptions(r, p, queue.PrintOptions{Media: r.URL.Query().Get("media"), Sides: r.URL.Query().Get("sides"), Color: r.URL.Query().Get("color")})
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	options, err = s.holdOptions(r.Context(), identity.User, options)
+	if err != nil {
+		respond(w, nil, err)
+		return
+	}
+	j, err := s.Store.SubmitOptions(r.Context(), p.ID, identity.User, title, format, r.Body, options)
 	if err != nil {
 		if errors.Is(err, queue.ErrTooLarge) {
 			respond(w, nil, err)

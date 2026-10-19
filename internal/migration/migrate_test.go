@@ -89,7 +89,7 @@ func TestPostgresMigrationAndQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Applied || len(report.Tables) != 10 {
+	if report.Applied || len(report.Tables) != 11 {
 		t.Fatalf("dry run report: %+v", report)
 	}
 	var n int

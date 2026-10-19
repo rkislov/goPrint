@@ -195,3 +195,25 @@ func TestSystemCUPSActuallyAppliesPPD(t *testing.T) {
 		t.Fatalf("result: %+v", r)
 	}
 }
+
+func TestPersonalOptionsReachActualFilterArguments(t *testing.T) {
+	ppd := testutil.PPD + "*DefaultPageSize: A4\n*PageSize A4/A4: \"\"\n*PageSize A3/A3: \"\"\n*DefaultDuplex: None\n*Duplex None: \"\"\n*Duplex DuplexNoTumble: \"\"\n*DefaultColorModel: RGB\n*ColorModel RGB: \"\"\n*ColorModel Gray: \"\"\n"
+	e, p, j, input := fixture(t, ppd)
+	j.Options = queue.PrintOptions{Media: "iso_a3_297x420mm", Sides: "two-sided-long-edge", Color: "monochrome"}
+	fake(t, e, `paper=0; duplex=0; color=0
+while [ "$#" -gt 0 ]; do
+ case "$1" in PageSize=A3) paper=1;; Duplex=DuplexNoTumble) duplex=1;; ColorModel=Gray) color=1;; esac
+ shift
+done
+[ "$paper$duplex$color" = 111 ] || exit 9
+printf 'configured-output'`)
+	r, err := e.Prepare(context.Background(), p, j, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Cleanup()
+	b, _ := os.ReadFile(r.Path)
+	if string(b) != "configured-output" {
+		t.Fatal(string(b))
+	}
+}

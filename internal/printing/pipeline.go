@@ -13,15 +13,27 @@ import (
 	"strings"
 )
 
+type FileValidator interface {
+	Check(context.Context, string) error
+}
 type Pipeline struct {
-	Store   *queue.Store
-	Marker  *watermark.Engine
-	Filters *filtering.Engine
+	Antivirus FileValidator
+	Store     *queue.Store
+	Marker    *watermark.Engine
+	Filters   *filtering.Engine
 }
 
 func (p *Pipeline) Deliver(ctx context.Context, printer queue.Printer, j queue.Job, path string) queue.DeliveryResult {
 	fail := func(err error) queue.DeliveryResult {
 		return queue.DeliveryResult{State: "failed", Detail: err.Error()}
+	}
+	if p.Antivirus != nil {
+		if err := p.Antivirus.Check(ctx, path); err != nil {
+			return fail(err)
+		}
+		if err := p.Store.RecordEvent(ctx, j.ID, "antivirus policy checked before document processing"); err != nil {
+			return fail(fmt.Errorf("cannot audit antivirus check; document not sent"))
+		}
 	}
 	policy := watermark.Default()
 	if err := p.Store.Setting(ctx, "watermark", &policy); err != nil {
@@ -39,6 +51,11 @@ func (p *Pipeline) Deliver(ctx context.Context, printer queue.Printer, j queue.J
 		path = marked
 		if err = p.Store.RecordEvent(ctx, j.ID, "watermark applied; policy="+policy.Version); err != nil {
 			return fail(fmt.Errorf("cannot audit watermark; document not sent"))
+		}
+	}
+	if j.Options != (queue.PrintOptions{}) {
+		if err := p.Store.RecordEvent(ctx, j.ID, fmt.Sprintf("print options; media=%s; sides=%s; color=%s", j.Options.Media, j.Options.Sides, j.Options.Color)); err != nil {
+			return fail(fmt.Errorf("cannot audit print options; document not sent"))
 		}
 	}
 	if p.Filters == nil {

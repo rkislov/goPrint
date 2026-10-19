@@ -27,6 +27,13 @@ func deliverIPP(ctx context.Context, p queue.Printer, j queue.Job, f *os.File) R
 	req.Operation.Add(goipp.MakeAttribute("requesting-user-name", goipp.TagName, goipp.String(j.Owner)))
 	req.Operation.Add(goipp.MakeAttribute("job-name", goipp.TagName, goipp.String(j.Title)))
 	req.Operation.Add(goipp.MakeAttribute("document-format", goipp.TagMimeType, goipp.String(j.Format)))
+	if p.PPDID == "" {
+		for _, v := range []struct{ name, value string }{{"media", j.Options.Media}, {"sides", j.Options.Sides}, {"print-color-mode", j.Options.Color}} {
+			if v.value != "" {
+				req.Job.Add(goipp.MakeAttribute(v.name, goipp.TagKeyword, goipp.String(v.value)))
+			}
+		}
+	}
 	header, err := req.EncodeBytes()
 	if err != nil {
 		return Result{State: "failed", Detail: "cannot encode IPP request"}
