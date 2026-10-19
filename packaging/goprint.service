@@ -1,0 +1,23 @@
+[Unit]
+Description=GoPrint local print queue
+After=network.target
+
+[Service]
+Type=simple
+User=goprint
+Group=goprint
+EnvironmentFile=/etc/goprint/environment
+ExecStart=/usr/local/bin/goprintd -data /var/lib/goprint -listen 127.0.0.1:8631
+StateDirectory=goprint
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+TimeoutStopSec=140
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

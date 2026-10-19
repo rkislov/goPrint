@@ -9,3 +9,6 @@
 *.test
 coverage.out
 /docs/SPECIFICATION.md
+/var/
+/docs/private/
+*.local.md
