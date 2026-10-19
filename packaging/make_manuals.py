@@ -30,6 +30,7 @@ styles = {
 }
 def inline(t):
  t=escape(t)
+ t=re.sub(r'\*\*([^*]+)\*\*',r'<b>\1</b>',t)
  t = re.sub(r'\[([^]]+)\]\((https?://[^)]+)\)',r'<link href="\2" color="#176e59">\1</link>',t)
  return re.sub(r'`([^`]+)`',r'<b>\1</b>',t)
 def footer(c,doc):
@@ -55,9 +56,9 @@ def render(source,target):
    story.extend([Spacer(1,48),Paragraph('G / GOPRINT',styles['caption']),Paragraph(inline(line[2:]),styles['title'])]);continue
   if line.startswith('## '):
    story.extend([PageBreak(),Paragraph(inline(line[3:]),styles['h2'])]);continue
-  if line.startswith('```'):
+  if line.lstrip().startswith('```'):
    code=[]
-   while i<len(lines) and not lines[i].startswith('```'):code.append(lines[i]);i+=1
+   while i<len(lines) and not lines[i].lstrip().startswith('```'):code.append(lines[i]);i+=1
    i+=1
    # Wrap only visual presentation; exact copyable commands remain in Markdown.
    code='\n'.join('\n'.join(textwrap.wrap(x, width=88,replace_whitespace=False,drop_whitespace=False) or ['']) for x in code)
@@ -70,7 +71,7 @@ def render(source,target):
    img=Image(str(p),width=iw*scale,height=ih*scale);img.hAlign='LEFT'
    story.append(KeepTogether([img,Spacer(1,6),Paragraph(escape(caption)+'. Демонстрационный стенд.',styles['caption'])]));continue
   para=[line]
-  while i<len(lines) and lines[i].strip() and not lines[i].startswith(('#','```','![')):
+  while i<len(lines) and lines[i].strip() and not lines[i].lstrip().startswith(('#','```','![')):
    para.append(lines[i]);i+=1
   story.append(Paragraph('<br/>'.join(inline(s) for s in para),styles['body']))
  target.parent.mkdir(parents=True,exist_ok=True)
