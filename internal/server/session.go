@@ -56,6 +56,9 @@ func (s *Server) identity(r *http.Request) (auth.Identity, bool) {
 	if json.Unmarshal(b, &v) != nil || v.User == "" || v.Expires <= time.Now().Unix() || v.Expires > time.Now().Add(8*time.Hour+time.Minute).Unix() {
 		return auth.Identity{}, false
 	}
+	if v.User != "local-admin" && s.Domain == nil {
+		return auth.Identity{}, false
+	}
 	return auth.Identity{User: v.User, Admin: v.Admin}, true
 }
 func (s *Server) authorized(r *http.Request) bool { _, ok := s.identity(r); return ok }

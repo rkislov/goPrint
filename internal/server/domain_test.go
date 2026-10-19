@@ -103,6 +103,14 @@ func TestDomainOwnershipAndAdminBoundary(t *testing.T) {
 	if w = request("GET", "/api/scans", "", alice); strings.Contains(w.Body.String(), "private.pdf") {
 		t.Fatal("inbox listing leak")
 	}
+	disabled := (&Server{Store: store, Token: s.Token}).Handler()
+	r := httptest.NewRequest("GET", "/api/session", nil)
+	r.AddCookie(alice)
+	denied := httptest.NewRecorder()
+	disabled.ServeHTTP(denied, r)
+	if denied.Code != 401 {
+		t.Fatal("disabled domain accepted old cookie")
+	}
 	// Role and username cannot be edited in a signed session.
 	payload, _ := json.Marshal(session{User: "bob@example.org", Admin: true, Expires: 9999999999})
 	bob.Value = base64.RawURLEncoding.EncodeToString(payload) + ".invalid"
