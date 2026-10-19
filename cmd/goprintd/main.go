@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,17 +15,21 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/rkislov/goPrint/internal/antivirus"
 	"github.com/rkislov/goPrint/internal/audit"
 	"github.com/rkislov/goPrint/internal/auth"
 	"github.com/rkislov/goPrint/internal/database"
 	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/filtering"
+	"github.com/rkislov/goPrint/internal/maildelivery"
+	"github.com/rkislov/goPrint/internal/personal"
 	"github.com/rkislov/goPrint/internal/printing"
 	"github.com/rkislov/goPrint/internal/queue"
 	"github.com/rkislov/goPrint/internal/scanning"
@@ -73,6 +78,28 @@ func run() error {
 		domain, err = auth.Load(*domainConfig)
 		if err != nil {
 			return fmt.Errorf("domain config: %w", err)
+		}
+	}
+	var negotiator auth.Negotiator
+	if d, ok := domain.(*auth.Domain); ok && d.Config.Kerberos != nil {
+		if *cert == "" || *key == "" || *publicURL == "" {
+			return errors.New("Kerberos requires tls-cert, tls-key and public-url")
+		}
+		u, e := url.Parse(*publicURL)
+		if e != nil || u.Scheme != "https" || "HTTP/"+u.Hostname() != d.Config.Kerberos.ServicePrincipal {
+			return errors.New("public-url DNS name must match Kerberos HTTP SPN")
+		}
+		pair, e := tls.LoadX509KeyPair(*cert, *key)
+		if e != nil {
+			return e
+		}
+		certificate, e := x509.ParseCertificate(pair.Certificate[0])
+		if e != nil {
+			return e
+		}
+		negotiator, e = auth.NewKerberos(d, certificate)
+		if e != nil {
+			return fmt.Errorf("Kerberos config: %w", e)
 		}
 	}
 	token := os.Getenv("GOPRINT_TOKEN")
@@ -135,6 +162,20 @@ func run() error {
 		return err
 	}
 	defer scans.Close()
+	av := antivirus.New(store)
+	scans.Validator = av
+	personalService, err := personal.New(*data, store)
+	if err != nil {
+		return err
+	}
+	mailService, err := maildelivery.New(*data, store, scans)
+	if err != nil {
+		return err
+	}
+	mailCtx, cancelMail := context.WithCancel(context.Background())
+	mailDone := make(chan struct{})
+	go func() { defer close(mailDone); mailService.Run(mailCtx) }()
+	defer func() { cancelMail(); <-mailDone }()
 	mark, err := watermark.New(filepath.Join(*data, "watermarks"))
 	if err != nil {
 		return err
@@ -143,14 +184,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	pipeline := &printing.Pipeline{Store: store, Marker: mark, Filters: filters}
+	pipeline := &printing.Pipeline{Antivirus: av, Store: store, Marker: mark, Filters: filters}
 	exporter := audit.New(store)
 	auditCtx, cancelAudit := context.WithCancel(context.Background())
 	auditDone := make(chan struct{})
 	go func() { defer close(auditDone); exporter.Run(auditCtx) }()
 	defer func() { cancelAudit(); <-auditDone }()
-	api := (&server.Server{PublicURL: *publicURL, Domain: domain, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
-	srv := &http.Server{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	api := (&server.Server{Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
+	srv := &http.Server{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 256 << 10}
 	stopClaims, cancelClaims := context.WithCancel(context.Background())
 	defer cancelClaims()
 	delivery, cancelDelivery := context.WithCancel(context.Background())

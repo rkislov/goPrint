@@ -92,9 +92,14 @@ func (s *Server) scanRoutes(api *http.ServeMux) {
 			respond(w, nil, queue.ErrConflict)
 			return
 		}
+		if err := s.Scans.CheckDocument(r.Context(), s.Scans.Path(j.ID)); err != nil {
+			http.Error(w, err.Error(), 409)
+			return
+		}
 		ext := map[string]string{"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png", "application/zip": ".zip"}[j.Format]
 		w.Header().Set("Content-Type", j.Format)
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scan-%s%s"`, j.ID, ext))
+
 		http.ServeFile(w, r, s.Scans.Path(j.ID))
 	})
 }

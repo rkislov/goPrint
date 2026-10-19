@@ -22,7 +22,7 @@ pdfmetrics.registerFont(TTFont('Manual',str(font)))
 pdfmetrics.registerFont(TTFont('ManualBold',str(bold)))
 pdfmetrics.registerFontFamily('Manual',normal='Manual',bold='ManualBold',italic='Manual',boldItalic='ManualBold')
 styles = {
- 'body':ParagraphStyle('body',fontName='Manual',fontSize=10,leading=14,spaceAfter=9,textColor=HexColor('#233e38')),
+ 'body':ParagraphStyle('body',fontName='Manual',fontSize=9.7,leading=13.4,spaceAfter=8,textColor=HexColor('#233e38')),
  'title':ParagraphStyle('title',fontName='ManualBold',fontSize=29,leading=36,spaceAfter=24,textColor=HexColor('#113e34')),
  'h2':ParagraphStyle('h2',fontName='ManualBold',fontSize=20,leading=25,spaceAfter=18,textColor=HexColor('#113e34')),
  'caption':ParagraphStyle('caption',fontName='Manual',fontSize=8,leading=11,spaceAfter=12,textColor=HexColor('#62756e')),
@@ -37,7 +37,7 @@ def footer(c,doc):
  c.saveState();w,h=doc.pagesize
  c.setStrokeColor(HexColor('#d4e1d9'));c.line(44,40,w-44,40)
  c.setFont('Manual',8);c.setFillColor(HexColor('#62756e'))
- c.drawString(44,26,'GoPrint · v0.1.0-alpha.2 · 19.10.2026')
+ c.drawString(44,26,'GoPrint · v0.2.0-beta.1 · 19.10.2026')
  c.drawRightString(w-44,26,str(doc.page));c.restoreState()
 class ManualDocument(SimpleDocTemplate):
  def afterFlowable(self, flowable):
@@ -57,17 +57,27 @@ def render(source,target):
   if line.startswith('## '):
    story.extend([PageBreak(),Paragraph(inline(line[3:]),styles['h2'])]);continue
   if line.lstrip().startswith('```'):
+   language=line.strip()[3:].strip()
    code=[]
    while i<len(lines) and not lines[i].lstrip().startswith('```'):code.append(lines[i]);i+=1
    i+=1
-   # Wrap only visual presentation; exact copyable commands remain in Markdown.
-   code='\n'.join('\n'.join(textwrap.wrap(x, width=88,replace_whitespace=False,drop_whitespace=False) or ['']) for x in code)
+   # Keep wrapped shell/PowerShell/systemd commands copyable.
+   formatted=[]
+   for original in code:
+    parts=textwrap.wrap(original,width=88,replace_whitespace=False,drop_whitespace=True,break_long_words=False,break_on_hyphens=False) or ['']
+    continuation=' `\n  ' if language in ('powershell','ps1') else ' \\\n  ' if language in ('sh','bash','ini') else '\n'
+    if original.lstrip().startswith('#'):
+     formatted.append('\n'.join(parts[:1]+['# '+x.lstrip('# ') for x in parts[1:]]))
+    else:
+     formatted.append(continuation.join(parts))
+   code='\n'.join(formatted)
    story.append(Preformatted(escape(code),styles['code']));continue
   image=re.match(r'!\[(.*?)\]\((.*?)\)',line)
   if image:
    caption,path=image.groups();p=source.parent/path
    with PILImage.open(p) as im: iw,ih=im.size
-   scale=min(507/iw,310/ih)
+   max_height=240 if p.name=='18-sso-keytab.png' else 250 if p.name=='12-katusha.jpg' else 310
+   scale=min(507/iw,max_height/ih)
    img=Image(str(p),width=iw*scale,height=ih*scale);img.hAlign='LEFT'
    story.append(KeepTogether([img,Spacer(1,6),Paragraph(escape(caption)+'. Демонстрационный стенд.',styles['caption'])]));continue
   para=[line]

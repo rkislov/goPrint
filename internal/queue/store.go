@@ -37,17 +37,18 @@ type Printer struct {
 	InputFormats []string `json:"input_formats"`
 }
 type Job struct {
-	ID        string `json:"id"`
-	PrinterID string `json:"printer_id"`
-	Owner     string `json:"owner"`
-	Title     string `json:"title"`
-	Format    string `json:"format"`
-	Size      int64  `json:"size"`
-	State     string `json:"state"`
-	Detail    string `json:"detail"`
-	RemoteID  string `json:"remote_id,omitempty"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	Options   PrintOptions `json:"options"`
+	ID        string       `json:"id"`
+	PrinterID string       `json:"printer_id"`
+	Owner     string       `json:"owner"`
+	Title     string       `json:"title"`
+	Format    string       `json:"format"`
+	Size      int64        `json:"size"`
+	State     string       `json:"state"`
+	Detail    string       `json:"detail"`
+	RemoteID  string       `json:"remote_id,omitempty"`
+	CreatedAt string       `json:"created_at"`
+	UpdatedAt string       `json:"updated_at"`
 }
 type Store struct {
 	db     *database.DB
@@ -65,6 +66,7 @@ func ID() string {
 func now() string { return time.Now().UTC().Format(time.RFC3339Nano) }
 
 func Open(dir string) (*Store, error) { return OpenDatabase(dir, "") }
+
 func OpenDatabase(dir, dsn string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
@@ -96,13 +98,15 @@ func OpenDatabase(dir, dsn string) (*Store, error) {
 	}()
 	s := &Store{db: db, spool: spool, unlock: unlock}
 	_, err = db.Exec(Schema)
-	if err == nil {
-		_, err = db.Exec(`INSERT INTO ipp_jobs(job_id) SELECT id FROM jobs WHERE NOT EXISTS(SELECT 1 FROM ipp_jobs WHERE job_id=jobs.id) ORDER BY created_at,id`)
-	}
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
+	if _, err = db.Exec(`INSERT INTO ipp_jobs(job_id) SELECT id FROM jobs WHERE NOT EXISTS(SELECT 1 FROM ipp_jobs WHERE job_id=jobs.id) ORDER BY created_at,id`); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	_, err = db.Exec(`INSERT INTO settings(key,value) VALUES('instance_id',?) ON CONFLICT(key) DO NOTHING`, "\""+ID()+"\"")
 	if err != nil {
 		db.Close()
@@ -200,9 +204,9 @@ func (s *Store) Pause(ctx context.Context, id string, paused bool) error {
 	return nil
 }
 func (s *Store) Submit(ctx context.Context, printerID, owner, title, format string, r io.Reader) (Job, error) {
-	return s.submit(ctx, printerID, owner, title, format, r, "")
+	return s.submit(ctx, printerID, owner, title, format, r, "", PrintOptions{})
 }
-func (s *Store) submit(ctx context.Context, printerID, owner, title, format string, r io.Reader, reserved string) (Job, error) {
+func (s *Store) submit(ctx context.Context, printerID, owner, title, format string, r io.Reader, reserved string, options PrintOptions) (Job, error) {
 	p, err := s.Printer(ctx, printerID)
 	if err != nil {
 		return Job{}, err
@@ -210,7 +214,7 @@ func (s *Store) submit(ctx context.Context, printerID, owner, title, format stri
 	if !Accepts(p, format) {
 		return Job{}, fmt.Errorf("format %q is not configured for printer", format)
 	}
-	j := Job{ID: ID(), PrinterID: printerID, Owner: owner, Title: title, Format: format, State: "queued", CreatedAt: now(), UpdatedAt: now()}
+	j := Job{Options: options, ID: ID(), PrinterID: printerID, Owner: owner, Title: title, Format: format, State: "queued", CreatedAt: now(), UpdatedAt: now()}
 	if reserved != "" {
 		existing, err := s.Job(ctx, reserved)
 		if err != nil {
@@ -221,6 +225,9 @@ func (s *Store) submit(ctx context.Context, printerID, owner, title, format stri
 		}
 		j.ID = reserved
 		j.CreatedAt = existing.CreatedAt
+	}
+	if options.FollowMe {
+		j.State = "held-release"
 	}
 	f, err := os.CreateTemp(s.spool, ".upload-")
 	if err != nil {
@@ -270,7 +277,7 @@ func (s *Store) submit(ctx context.Context, printerID, owner, title, format stri
 		_, err = tx.ExecContext(ctx, `INSERT INTO jobs(id,printer_id,owner,title,format,size,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, j.ID, j.PrinterID, j.Owner, j.Title, j.Format, j.Size, j.State, j.CreatedAt, j.UpdatedAt)
 	} else {
 		var result sql.Result
-		result, err = tx.ExecContext(ctx, `UPDATE jobs SET format=?,size=?,state='queued',detail='',updated_at=? WHERE id=? AND state='receiving'`, j.Format, j.Size, j.UpdatedAt, j.ID)
+		result, err = tx.ExecContext(ctx, `UPDATE jobs SET format=?,size=?,state=?,detail='',updated_at=? WHERE id=? AND state='receiving'`, j.Format, j.Size, j.State, j.UpdatedAt, j.ID)
 		if err == nil {
 			n, _ := result.RowsAffected()
 			if n != 1 {
@@ -278,11 +285,14 @@ func (s *Store) submit(ctx context.Context, printerID, owner, title, format stri
 			}
 		}
 	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `INSERT INTO job_options(job_id,options) VALUES(?,?) ON CONFLICT(job_id) DO UPDATE SET options=excluded.options`, j.ID, encodeOptions(options))
+	}
 	if err == nil && reserved == "" {
 		_, err = tx.ExecContext(ctx, `INSERT INTO ipp_jobs(job_id) VALUES(?)`, j.ID)
 	}
 	if err == nil {
-		_, err = tx.ExecContext(ctx, `INSERT INTO events(job_id,state,detail,at) VALUES(?,'queued','accepted',?)`, j.ID, now())
+		_, err = tx.ExecContext(ctx, `INSERT INTO events(job_id,state,detail,at) VALUES(?,?,'accepted',?)`, j.ID, j.State, now())
 	}
 	if err != nil {
 		os.Remove(path)
@@ -297,13 +307,17 @@ func (s *Store) submit(ctx context.Context, printerID, owner, title, format stri
 }
 func (s *Store) Document(id string) string { return filepath.Join(s.spool, id+".data") }
 
-const jobColumns = `id,printer_id,owner,title,format,size,state,detail,remote_id,created_at,updated_at`
+const jobColumns = `id,printer_id,owner,title,format,size,state,detail,remote_id,created_at,updated_at,COALESCE((SELECT options FROM job_options WHERE job_id=jobs.id),'{}')`
 
 func scanJob(row interface{ Scan(...any) error }) (Job, error) {
 	var j Job
-	err := row.Scan(&j.ID, &j.PrinterID, &j.Owner, &j.Title, &j.Format, &j.Size, &j.State, &j.Detail, &j.RemoteID, &j.CreatedAt, &j.UpdatedAt)
+	var encoded string
+	err := row.Scan(&j.ID, &j.PrinterID, &j.Owner, &j.Title, &j.Format, &j.Size, &j.State, &j.Detail, &j.RemoteID, &j.CreatedAt, &j.UpdatedAt, &encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
+	}
+	if err == nil {
+		j.Options, err = decodeOptions(encoded)
 	}
 	return j, err
 }
@@ -456,7 +470,10 @@ func (s *Store) IPPJob(ctx context.Context, n int) (Job, error) {
 
 // ReserveIPP persists Create-Job without making an empty document deliverable.
 func (s *Store) ReserveIPP(ctx context.Context, printer, owner, title, format string) (Job, error) {
-	j := Job{ID: ID(), PrinterID: printer, Owner: owner, Title: title, Format: format, State: "held", CreatedAt: now(), UpdatedAt: now()}
+	return s.reserveIPP(ctx, printer, owner, title, format, PrintOptions{})
+}
+func (s *Store) reserveIPP(ctx context.Context, printer, owner, title, format string, options PrintOptions) (Job, error) {
+	j := Job{Options: options, ID: ID(), PrinterID: printer, Owner: owner, Title: title, Format: format, State: "held", CreatedAt: now(), UpdatedAt: now()}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return j, err
@@ -474,13 +491,16 @@ func (s *Store) ReserveIPP(ctx context.Context, printer, owner, title, format st
 	if err != nil {
 		return j, err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO job_options(job_id,options) VALUES(?,?)`, j.ID, encodeOptions(options)); err != nil {
+		return j, err
+	}
 	return j, tx.Commit()
 }
 func (s *Store) SendIPP(ctx context.Context, j Job, format string, r io.Reader) (Job, error) {
 	if err := s.transition(ctx, j.ID, "held", "receiving", "receiving IPP document", ""); err != nil {
 		return Job{}, err
 	}
-	result, err := s.submit(ctx, j.PrinterID, j.Owner, j.Title, format, r, j.ID)
+	result, err := s.submit(ctx, j.PrinterID, j.Owner, j.Title, format, r, j.ID, j.Options)
 	if err != nil {
 		s.transition(context.WithoutCancel(ctx), j.ID, "receiving", "failed", "IPP document receive failed; verify before retrying", "")
 	}
@@ -491,8 +511,8 @@ func (s *Store) CancelIPP(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if j.State == "held" {
-		return s.transition(ctx, id, "held", "canceled", "canceled by user", "")
+	if j.State == "held" || j.State == "held-release" {
+		return s.transition(ctx, id, j.State, "canceled", "canceled by user", "")
 	}
 	return s.Cancel(ctx, id)
 }

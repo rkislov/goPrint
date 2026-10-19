@@ -59,7 +59,17 @@ func (s *Server) identity(r *http.Request) (auth.Identity, bool) {
 	if v.User != "local-admin" && s.Domain == nil {
 		return auth.Identity{}, false
 	}
-	return auth.Identity{User: v.User, Admin: v.Admin}, true
+	id := auth.Identity{User: v.User, Admin: v.Admin}
+	if v.User != "local-admin" && s.Store != nil {
+		var snapshot identitySnapshot
+		if err := s.Store.Setting(r.Context(), "identity:"+v.User, &snapshot); err != nil {
+			return auth.Identity{}, false
+		}
+		if snapshot.Identity.User == v.User && snapshot.Expires > time.Now().Unix() {
+			id = snapshot.Identity
+		}
+	}
+	return id, true
 }
 func (s *Server) authorized(r *http.Request) bool { _, ok := s.identity(r); return ok }
 func (s *Server) authCredentials(ctx context.Context, user, password string) (auth.Identity, error) {
@@ -130,12 +140,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Неверные данные входа или доступ к GoPrint не разрешён", 401)
 		return
 	}
-	expires := time.Now().Add(8 * time.Hour)
-	b, _ := json.Marshal(session{User: id.User, Admin: id.Admin, Expires: expires.Unix()})
-	payload := base64.RawURLEncoding.EncodeToString(b)
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: payload + "." + s.signed(payload), Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, Expires: expires, MaxAge: 8 * 60 * 60})
-	respond(w, id, nil)
+	if s.sessionFor(w, r, id) {
+		respond(w, map[string]any{"user": id.User, "admin": id.Admin}, nil)
+	}
 }
+
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: -1})
 	respond(w, map[string]bool{"ok": true}, nil)

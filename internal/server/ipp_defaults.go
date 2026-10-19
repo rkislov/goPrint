@@ -3,142 +3,147 @@
 package server
 
 import (
-	"bufio"
-	"bytes"
-	"fmt"
+	"errors"
 	"github.com/OpenPrinting/goipp"
+	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/queue"
-
-	"strings"
+	"net/http"
 )
 
 type printDefaults struct {
-	media, sides, color string
-	x, y                int
+	caps    drivers.Capabilities
+	options queue.PrintOptions
 }
 
 func (s *Server) defaults(p queue.Printer) (printDefaults, error) {
-	d := printDefaults{media: "iso_a4_210x297mm", sides: "one-sided", color: "color", x: 21000, y: 29700}
-	if p.PPDID == "" {
-		return d, nil
-	}
-	if s.Catalog == nil {
-		return d, fmt.Errorf("PPD catalog unavailable")
-	}
-	data, err := s.Catalog.PPD(p.PPDID)
+	c, err := s.capabilities(p)
+	return printDefaults{c, c.Defaults}, err
+}
+func (s *Server) defaultsFor(r *http.Request, p queue.Printer) (printDefaults, error) {
+	d, err := s.defaults(p)
 	if err != nil {
 		return d, err
 	}
-	values := map[string]string{}
-	scan := bufio.NewScanner(bytes.NewReader(data))
-	scan.Buffer(make([]byte, 4096), 4<<20)
-	for scan.Scan() {
-		k, v, ok := strings.Cut(scan.Text(), ":")
-		if ok {
-			values[strings.Split(k, "/")[0]] = strings.Trim(strings.TrimSpace(v), "\"")
-		}
+	if id, ok := s.identity(r); ok && id.User != "" {
+		d.options, err = s.effectiveOptions(r, p, queue.PrintOptions{})
 	}
-	page := values["*DefaultPageSize"]
-	switch page {
-	case "A3":
-		d.media = "iso_a3_297x420mm"
-		d.x = 29700
-		d.y = 42000
-	case "Letter":
-		d.media = "na_letter_8.5x11in"
-		d.x = 21590
-		d.y = 27940
-	case "Legal":
-		d.media = "na_legal_8.5x14in"
-		d.x = 21590
-		d.y = 35560
-	case "A4":
-	default:
-		return d, fmt.Errorf("unsupported PPD default paper size for client provisioning")
-	}
-	switch values["*DefaultDuplex"] {
-	case "DuplexNoTumble":
-		d.sides = "two-sided-long-edge"
-	case "DuplexTumble":
-		d.sides = "two-sided-short-edge"
-	}
-	if values["*ColorDevice"] == "False" || values["*DefaultColorSpace"] == "Gray" {
-		d.color = "monochrome"
-	}
-	return d, scan.Err()
+	return d, err
 }
-func (d printDefaults) mediaCollection() goipp.Collection {
+func mediaCollection(m drivers.Media) goipp.Collection {
 	var size goipp.Attributes
-	add(&size, "x-dimension", goipp.TagInteger, goipp.Integer(d.x))
-	add(&size, "y-dimension", goipp.TagInteger, goipp.Integer(d.y))
-	var col goipp.Attributes
-	add(&col, "media-size", goipp.TagBeginCollection, goipp.Collection(size))
-	return goipp.Collection(col)
+	add(&size, "x-dimension", goipp.TagInteger, goipp.Integer(m.Width))
+	add(&size, "y-dimension", goipp.TagInteger, goipp.Integer(m.Height))
+	var a goipp.Attributes
+	add(&a, "media-size", goipp.TagBeginCollection, goipp.Collection(size))
+	return goipp.Collection(a)
 }
-func (d printDefaults) optionsSupported(attrs goipp.Attributes) bool {
+func (d printDefaults) selected(attrs goipp.Attributes) (queue.PrintOptions, error) {
+	var o queue.PrintOptions
+	bad := errors.New("unsupported print option")
 	for _, a := range attrs {
 		if len(a.Values) != 1 {
-			return false
+			return o, bad
 		}
 		v := a.Values[0].V
 		switch a.Name {
 		case "copies", "number-up":
 			if n, ok := v.(goipp.Integer); !ok || n != 1 {
-				return false
+				return o, bad
 			}
 		case "media":
-			if x, ok := v.(goipp.String); !ok || string(x) != d.media {
-				return false
+			x, ok := v.(goipp.String)
+			if !ok {
+				return o, bad
 			}
+			o.Media = string(x)
 		case "sides":
-			if x, ok := v.(goipp.String); !ok || string(x) != d.sides {
-				return false
+			x, ok := v.(goipp.String)
+			if !ok {
+				return o, bad
 			}
+			o.Sides = string(x)
 		case "print-color-mode":
-			if x, ok := v.(goipp.String); !ok || string(x) != d.color {
-				return false
+			x, ok := v.(goipp.String)
+			if !ok {
+				return o, bad
 			}
+			o.Color = string(x)
 		case "media-col":
 			col, ok := v.(goipp.Collection)
 			if !ok {
-				return false
+				return o, bad
 			}
 			for _, member := range col {
 				if len(member.Values) != 1 {
-					return false
+					return o, bad
 				}
 				switch member.Name {
 				case "media-size":
 					size, ok := member.Values[0].V.(goipp.Collection)
-					if !ok || len(size) != 2 || intAttr(goipp.Attributes(size), "x-dimension") != d.x || intAttr(goipp.Attributes(size), "y-dimension") != d.y {
-						return false
+					if !ok {
+						return o, bad
 					}
+					matched := ""
+					for _, m := range d.caps.Media {
+						if intAttr(goipp.Attributes(size), "x-dimension") == m.Width && intAttr(goipp.Attributes(size), "y-dimension") == m.Height {
+							matched = m.Key
+						}
+					}
+					if matched == "" || o.Media != "" && o.Media != matched {
+						return o, bad
+					}
+					o.Media = matched
 				case "media-size-name":
-					if name, ok := member.Values[0].V.(goipp.String); !ok || string(name) != d.media {
-						return false
+					name, ok := member.Values[0].V.(goipp.String)
+					if !ok || o.Media != "" && o.Media != string(name) {
+						return o, bad
 					}
+					o.Media = string(name)
 				default:
-					return false
+					return o, bad
 				}
 			}
+		case "job-priority":
+			if n, ok := v.(goipp.Integer); !ok || n != 50 {
+				return o, bad
+			}
+		case "job-hold-until":
+			if str, ok := v.(goipp.String); !ok || str != "no-hold" {
+				return o, bad
+			}
 		default:
-			return false
+			return o, bad
 		}
 	}
-	return true
+	return d.caps.Resolve(d.options, o)
 }
 func (d printDefaults) attributes() goipp.Attributes {
 	var a goipp.Attributes
-	add(&a, "media-col-default", goipp.TagBeginCollection, d.mediaCollection())
-	add(&a, "media-col-database", goipp.TagBeginCollection, d.mediaCollection())
+	var media []string
+	database := goipp.Attribute{Name: "media-col-database"}
+	for _, m := range d.caps.Media {
+		media = append(media, m.Key)
+		database.Values.Add(goipp.TagBeginCollection, mediaCollection(m))
+		if m.Key == d.options.Media {
+			add(&a, "media-col-default", goipp.TagBeginCollection, mediaCollection(m))
+		}
+	}
+	a.Add(database)
 	multi(&a, "media-col-supported", goipp.TagKeyword, []string{"media-size", "media-size-name"})
-	add(&a, "media-default", goipp.TagKeyword, goipp.String(d.media))
-	multi(&a, "media-supported", goipp.TagKeyword, []string{d.media})
-	add(&a, "media-ready", goipp.TagKeyword, goipp.String(d.media))
-	add(&a, "sides-default", goipp.TagKeyword, goipp.String(d.sides))
-	multi(&a, "sides-supported", goipp.TagKeyword, []string{d.sides})
-	add(&a, "print-color-mode-default", goipp.TagKeyword, goipp.String(d.color))
-	multi(&a, "print-color-mode-supported", goipp.TagKeyword, []string{d.color})
-	add(&a, "color-supported", goipp.TagBoolean, goipp.Boolean(d.color == "color"))
+	multi(&a, "media-supported", goipp.TagKeyword, media)
+	add(&a, "media-default", goipp.TagKeyword, goipp.String(d.options.Media))
+	add(&a, "media-ready", goipp.TagKeyword, goipp.String(d.options.Media))
+	multi(&a, "sides-supported", goipp.TagKeyword, d.caps.Sides)
+	add(&a, "sides-default", goipp.TagKeyword, goipp.String(d.options.Sides))
+	multi(&a, "print-color-mode-supported", goipp.TagKeyword, d.caps.Color)
+	add(&a, "print-color-mode-default", goipp.TagKeyword, goipp.String(d.options.Color))
+	add(&a, "color-supported", goipp.TagBoolean, goipp.Boolean(func() bool {
+		for _, c := range d.caps.Color {
+			if c == "color" {
+				return true
+			}
+		}
+		return false
+	}()))
 	return a
 }

@@ -1,0 +1,17 @@
+{
+  "url": "ldaps://dc01.example.org:636",
+  "domain": "example.org",
+  "netbios": "EXAMPLE",
+  "base_dn": "DC=example,DC=org",
+  "allowed_group_dn": "CN=GoPrint Users,OU=Groups,DC=example,DC=org",
+  "admin_group_dn": "CN=GoPrint Admins,OU=Groups,DC=example,DC=org",
+  "ca_file": "/etc/goprint/domain-ca.pem",
+  "directory_bind_dn": "CN=svc_goprint_ldap,OU=Service Accounts,DC=example,DC=org",
+  "directory_password_file": "/etc/goprint/directory-password",
+  "kerberos": {
+    "realm": "EXAMPLE.ORG",
+    "service_principal": "HTTP/print.example.org",
+    "keytab_file": "/var/lib/goprint/domain/http.keytab",
+    "require_channel_binding": true
+  }
+}

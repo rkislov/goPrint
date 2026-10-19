@@ -47,15 +47,19 @@ type Options struct {
 	Resolution int    `json:"resolution"`
 	Format     string `json:"format"`
 }
+type FileValidator interface {
+	Check(context.Context, string) error
+}
 type Service struct {
-	db      *database.DB
-	dir     string
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	mu      sync.Mutex
-	active  map[string]bool
-	closing bool
+	Validator FileValidator
+	db        *database.DB
+	dir       string
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	mu        sync.Mutex
+	active    map[string]bool
+	closing   bool
 }
 
 func Open(dir string) (*Service, error) { return OpenDatabase(dir, "") }
@@ -78,6 +82,10 @@ func OpenDatabase(dir, dsn string) (*Service, error) {
 		return nil, err
 	}
 
+	if _, err = db.Exec(`UPDATE scan_delivery SET state='unknown',detail='server stopped during SMTP delivery; verify recipient before retrying' WHERE state='sending'`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Service{db: db, dir: dir, ctx: ctx, cancel: cancel, active: map[string]bool{}}, nil
 }
@@ -216,6 +224,9 @@ func (s *Service) Receive(ctx context.Context, id, title string, r io.Reader) (J
 	if closeErr != nil {
 		return j, closeErr
 	}
+	if err = s.CheckDocument(ctx, f.Name()); err != nil {
+		return j, err
+	}
 	j.Format, err = detect(f.Name())
 	if err != nil {
 		return j, err
@@ -287,6 +298,9 @@ func (s *Service) Start(ctx context.Context, o Options) (Job, error) {
 		scanCtx, cancel := context.WithTimeout(s.ctx, 3*time.Minute)
 		defer cancel()
 		format, size, err := s.perform(scanCtx, scanner, j, o)
+		if err == nil {
+			err = s.CheckDocument(s.ctx, s.Path(j.ID))
+		}
 		state, detail := "completed", ""
 		if err != nil {
 			state = "failed"
@@ -325,4 +339,12 @@ func (s *Service) JobsFor(ctx context.Context, owner string, admin bool) ([]Job,
 const Schema = `
  CREATE TABLE IF NOT EXISTS scanners(id TEXT PRIMARY KEY,name TEXT NOT NULL,uri TEXT NOT NULL,token_hash TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS scan_owners(id TEXT PRIMARY KEY,owner TEXT NOT NULL);
- CREATE TABLE IF NOT EXISTS scans(id TEXT PRIMARY KEY,scanner_id TEXT NOT NULL REFERENCES scanners(id),title TEXT NOT NULL,source TEXT NOT NULL,state TEXT NOT NULL,detail TEXT NOT NULL,format TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL);`
+ CREATE TABLE IF NOT EXISTS scans(id TEXT PRIMARY KEY,scanner_id TEXT NOT NULL REFERENCES scanners(id),title TEXT NOT NULL,source TEXT NOT NULL,state TEXT NOT NULL,detail TEXT NOT NULL,format TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS scan_delivery(id TEXT PRIMARY KEY REFERENCES scans(id),state TEXT NOT NULL,target TEXT NOT NULL,detail TEXT NOT NULL,updated_at TEXT NOT NULL);`
+
+func (s *Service) CheckDocument(ctx context.Context, path string) error {
+	if s.Validator == nil {
+		return nil
+	}
+	return s.Validator.Check(ctx, path)
+}

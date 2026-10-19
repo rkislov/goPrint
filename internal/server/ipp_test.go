@@ -20,6 +20,7 @@ func TestIPPAuthenticatedQueueAndOwnerIsolation(t *testing.T) {
 	}
 	defer st.Close()
 	p, _ := st.AddPrinter(context.Background(), queue.Printer{Name: "IPP", URI: "socket://127.0.0.1:9100", Formats: []string{"application/pdf"}, Paused: true})
+	st.SetAccess(context.Background(), p.ID, queue.PrinterAccess{Public: true})
 	h := (&Server{Store: st, Token: strings.Repeat("x", 32), Domain: fakeDomain{}}).Handler()
 	call := func(user string, op goipp.Op, n int, body []byte, option bool) *goipp.Message {
 		t.Helper()
@@ -89,6 +90,7 @@ func TestIPPCreateSendDocument(t *testing.T) {
 	}
 	defer st.Close()
 	p, _ := st.AddPrinter(context.Background(), queue.Printer{Name: "IPP multi step", URI: "socket://127.0.0.1:9100", Formats: []string{"application/pdf"}, Paused: true})
+	st.SetAccess(context.Background(), p.ID, queue.PrinterAccess{Public: true})
 	s := &Server{Store: st, Token: strings.Repeat("z", 32)}
 	h := s.Handler()
 	call := func(op goipp.Op, n int, document []byte) *goipp.Message {

@@ -17,10 +17,13 @@ func (s *Server) permitAPI(r *http.Request) bool {
 		return true
 	}
 	path := r.URL.Path
-	if path == "/api/session" {
+	if path == "/api/session" || strings.HasPrefix(path, "/api/me/") {
 		return true
 	}
-	if r.Method == "GET" && (path == "/api/printers" || path == "/api/jobs" || strings.HasPrefix(path, "/api/jobs/") || path == "/api/scanners" || path == "/api/scans" || strings.HasPrefix(path, "/api/scans/") || strings.HasPrefix(path, "/api/clients/")) {
+	if r.Method == "GET" && (path == "/api/printers" || strings.HasPrefix(path, "/api/printers/") && strings.HasSuffix(path, "/preferences") || path == "/api/jobs" || strings.HasPrefix(path, "/api/jobs/") || path == "/api/scanners" || path == "/api/scans" || strings.HasPrefix(path, "/api/scans/") || strings.HasPrefix(path, "/api/clients/")) {
+		return true
+	}
+	if r.Method == "PUT" && strings.HasPrefix(path, "/api/printers/") && strings.HasSuffix(path, "/preferences") {
 		return true
 	}
 	return r.Method == "POST" && (path == "/api/jobs" || path == "/api/scans" || strings.HasPrefix(path, "/api/jobs/") && strings.HasSuffix(path, "/cancel"))

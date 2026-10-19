@@ -47,9 +47,12 @@ func multi(attrs *goipp.Attributes, name string, tag goipp.Tag, values []string)
 	}
 	attrs.Add(a)
 }
-func (s *Server) ippIdentity(r *http.Request) (auth.Identity, bool) {
+func (s *Server) ippIdentity(w http.ResponseWriter, r *http.Request) (auth.Identity, bool) {
 	if id, ok := s.identity(r); ok {
 		return id, true
+	}
+	if s.SSO != nil {
+		return s.negotiate(w, r)
 	}
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
 	ip := net.ParseIP(host)
@@ -81,13 +84,20 @@ func (s *Server) ipp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid or oversized IPP header", 400)
 		return
 	}
-	id, ok := s.ippIdentity(r)
-	if !ok && goipp.Op(req.Code) != goipp.OpGetPrinterAttributes {
-		w.Header().Set("WWW-Authenticate", `Basic realm="GoPrint", charset="UTF-8"`)
+	id, ok := s.ippIdentity(w, r)
+	access, accessErr := s.Store.Access(r.Context(), p.ID)
+	if !ok && (goipp.Op(req.Code) != goipp.OpGetPrinterAttributes || accessErr != nil || !access.Public || strings.HasPrefix(r.Header.Get("Authorization"), "Negotiate")) {
+		if w.Header().Get("WWW-Authenticate") == "" {
+			s.challenge(w)
+		}
 		http.Error(w, "authentication required", 401)
 		return
 	}
 	r = r.WithContext(context.WithValue(r.Context(), identityKey{}, id))
+	if ok && !s.allowedPrinter(r, p) {
+		http.Error(w, "printer not found", 404)
+		return
+	}
 	rsp := goipp.NewResponse(req.Version, goipp.StatusOk, req.RequestID)
 	add(&rsp.Operation, "attributes-charset", goipp.TagCharset, goipp.String("utf-8"))
 	add(&rsp.Operation, "attributes-natural-language", goipp.TagLanguage, goipp.String("en"))
@@ -99,13 +109,18 @@ func (s *Server) ipp(w http.ResponseWriter, r *http.Request) {
 	switch goipp.Op(req.Code) {
 	case goipp.OpGetPrinterAttributes:
 		add(&rsp.Printer, "printer-uri-supported", goipp.TagURI, goipp.String(uri))
-		add(&rsp.Printer, "uri-authentication-supported", goipp.TagKeyword, goipp.String("basic"))
+		add(&rsp.Printer, "uri-authentication-supported", goipp.TagKeyword, goipp.String(func() string {
+			if s.SSO != nil {
+				return "negotiate"
+			}
+			return "basic"
+		}()))
 		security := "none"
 		if strings.HasPrefix(uri, "https:") {
 			security = "tls"
 		}
 		add(&rsp.Printer, "uri-security-supported", goipp.TagKeyword, goipp.String(security))
-		defaults, err := s.defaults(p)
+		defaults, err := s.defaultsFor(r, p)
 		if err != nil {
 			status(goipp.StatusErrorInternal, "cannot read PPD defaults")
 			break
@@ -184,13 +199,14 @@ func (s *Server) ipp(w http.ResponseWriter, r *http.Request) {
 			status(goipp.StatusErrorCompressionNotSupported, "compression unsupported")
 			break
 		}
-		defaults, e := s.defaults(p)
+		defaults, e := s.defaultsFor(r, p)
 		if e != nil {
 			status(goipp.StatusErrorInternal, "cannot read PPD defaults")
 			break
 		}
-		if !defaults.optionsSupported(req.Job) {
-			status(goipp.StatusErrorAttributesOrValues, "only PPD default options are supported")
+		selected, selectionError := defaults.selected(req.Job)
+		if selectionError != nil {
+			status(goipp.StatusErrorAttributesOrValues, "print options not supported by the selected PPD")
 			break
 		}
 		if goipp.Op(req.Code) == goipp.OpValidateJob {
@@ -204,11 +220,16 @@ func (s *Server) ipp(w http.ResponseWriter, r *http.Request) {
 			status(goipp.StatusErrorBadRequest, "invalid job title")
 			break
 		}
+		selected, err = s.holdOptions(r.Context(), id.User, selected)
+		if err != nil {
+			status(goipp.StatusErrorServiceUnavailable, "personal settings unavailable")
+			break
+		}
 		var j queue.Job
 		var err error
 		switch goipp.Op(req.Code) {
 		case goipp.OpCreateJob:
-			j, err = s.Store.ReserveIPP(r.Context(), p.ID, id.User, title, format)
+			j, err = s.Store.ReserveIPPOptions(r.Context(), p.ID, id.User, title, format, selected)
 		case goipp.OpSendDocument:
 			n := intAttr(req.Operation, "job-id")
 			existing, e := s.Store.IPPJob(r.Context(), n)
@@ -223,7 +244,7 @@ func (s *Server) ipp(w http.ResponseWriter, r *http.Request) {
 			}
 			j, err = s.Store.SendIPP(r.Context(), existing, format, body)
 		default:
-			j, err = s.Store.Submit(r.Context(), p.ID, id.User, title, format, body)
+			j, err = s.Store.SubmitOptions(r.Context(), p.ID, id.User, title, format, body, selected)
 		}
 		if rsp.Code != 0 {
 			break
@@ -312,7 +333,7 @@ func ippJob(j queue.Job, n int, uri string) goipp.Attributes {
 	state := 9
 	reason := "job-completed-successfully"
 	switch j.State {
-	case "held":
+	case "held", "held-release":
 		state = 4
 		reason = "job-incoming"
 	case "receiving":
