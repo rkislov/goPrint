@@ -1,0 +1,8 @@
+{
+  "socket": "/run/goprint-samba/submit.sock",
+  "socket_gid": 100200,
+  "users": {
+    "100001": "alice@example.org",
+    "100002": "bob@example.org"
+  }
+}

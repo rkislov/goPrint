@@ -37,6 +37,7 @@ type Server struct {
 	Monitoring  *monitoring.Service
 	Antivirus   *antivirus.Service
 	emailMu     sync.Mutex
+	sambaMu     sync.Mutex
 	Personal    *personal.Service
 	Mail        *maildelivery.Service
 	PublicURL   string
@@ -274,10 +275,17 @@ func (s *Server) pause(w http.ResponseWriter, r *http.Request) {
 	respond(w, p, err)
 }
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
+	j, ok := s.acceptPrint(w, r)
+	if !ok {
+		return
+	}
+	s.writeAccepted(w, j)
+}
+func (s *Server) acceptPrint(w http.ResponseWriter, r *http.Request) (queue.Job, bool) {
 	format, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
 		http.Error(w, "valid Content-Type required", 400)
-		return
+		return queue.Job{}, false
 	}
 	title := r.URL.Query().Get("title")
 	if title == "" {
@@ -285,40 +293,40 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(title) > 255 || strings.ContainsAny(title, "\r\n\x00") {
 		http.Error(w, "invalid title", 400)
-		return
+		return queue.Job{}, false
 	}
 	policy := watermark.Default()
 	if err := s.Store.Setting(r.Context(), "watermark", &policy); err != nil {
 		respond(w, nil, err)
-		return
+		return queue.Job{}, false
 	}
 	if policy.Enabled && format != "application/pdf" {
 		http.Error(w, "Обязательный watermark поддерживает только PDF", 415)
-		return
+		return queue.Job{}, false
 	}
 	p, ok := s.permittedPrinter(w, r, r.URL.Query().Get("printer"))
 	if !ok {
-		return
+		return queue.Job{}, false
 	}
 	if !queue.Accepts(p, format) {
 		http.Error(w, "document format not accepted by printer", 415)
-		return
+		return queue.Job{}, false
 	}
 	if r.ContentLength > queue.MaxDocumentSize {
 		http.Error(w, "document exceeds size limit", 413)
-		return
+		return queue.Job{}, false
 	}
 	// LimitReader in Store also protects chunked requests without Content-Length.
 	identity, _ := s.identity(r)
 	options, err := s.effectiveOptions(r, p, queue.PrintOptions{Media: r.URL.Query().Get("media"), Sides: r.URL.Query().Get("sides"), Color: r.URL.Query().Get("color")})
 	if err != nil {
 		http.Error(w, err.Error(), 400)
-		return
+		return queue.Job{}, false
 	}
 	options, err = s.holdOptions(r.Context(), identity.User, options)
 	if err != nil {
 		respond(w, nil, err)
-		return
+		return queue.Job{}, false
 	}
 	j, err := s.Store.SubmitOptions(r.Context(), p.ID, identity.User, title, format, r.Body, options)
 	if err != nil {
@@ -327,8 +335,11 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "document could not be accepted", 400)
 		}
-		return
+		return queue.Job{}, false
 	}
+	return j, true
+}
+func (s *Server) writeAccepted(w http.ResponseWriter, j queue.Job) {
 	w.Header().Set("Location", "/api/jobs/"+j.ID)
 	w.Header().Set("Content-Length", strconv.Itoa(len(mustJSON(j))))
 	w.Header().Set("Content-Type", "application/json")

@@ -13,15 +13,15 @@ for arch in amd64 arm64; do
  name="goprint-$version-linux-$arch"
  root="dist/release/$name"
  mkdir -p "$root/packaging" "$root/docs"
- for command in goprintd goprintctl goprint-ppds goprint-migrate goprint-mail-submit; do
+ for command in goprintd goprintctl goprint-ppds goprint-migrate goprint-mail-submit goprint-samba-submit; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-s -w -X github.com/rkislov/goPrint/internal/buildinfo.Version=$version -X github.com/rkislov/goPrint/internal/buildinfo.Commit=$commit -X github.com/rkislov/goPrint/internal/buildinfo.Date=$date" -o "$root/$command" "./cmd/$command"
  done
  cp LICENSE NOTICE THIRD_PARTY_NOTICES.md README.md "$root/"
  if [ -f "docs/RELEASE-NOTES-$version.md" ]; then cp "docs/RELEASE-NOTES-$version.md" "$root/RELEASE-NOTES.md"; fi
  cp -Rf third_party "$root/"
  cp packaging/postgresql-init.sql packaging/sqlite-to-postgresql.sh "$root/packaging/"
- cp docs/POSTGRESQL.md docs/MONITORING.md docs/SCAN-INBOX.md "$root/docs/"
- cp packaging/goprint.service packaging/domain.example.json packaging/domain-sso.example.json "$root/packaging/"
+ cp docs/POSTGRESQL.md docs/MONITORING.md docs/SCAN-INBOX.md docs/SAMBA.md "$root/docs/"
+ cp packaging/goprint.service packaging/domain.example.json packaging/domain-sso.example.json packaging/samba.example.json packaging/samba-share.example.conf packaging/samba-systemd.example.conf "$root/packaging/"
  cp docs/ADMINISTRATOR.md docs/USER.md docs/DOMAIN-AND-CLIENTS.md docs/BETA-OPERATIONS.md "$root/docs/"
  cp -R docs/images "$root/docs/"
  cp output/pdf/GoPrint-Administrator.pdf output/pdf/GoPrint-User.pdf "$root/docs/"

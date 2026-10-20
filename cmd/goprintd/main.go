@@ -33,6 +33,7 @@ import (
 	"github.com/rkislov/goPrint/internal/personal"
 	"github.com/rkislov/goPrint/internal/printing"
 	"github.com/rkislov/goPrint/internal/queue"
+	"github.com/rkislov/goPrint/internal/sambaprint"
 	"github.com/rkislov/goPrint/internal/scaninbox"
 	"github.com/rkislov/goPrint/internal/scanning"
 	"github.com/rkislov/goPrint/internal/server"
@@ -52,6 +53,7 @@ func main() {
 	}
 }
 func run() error {
+	sambaConfig := flag.String("samba-config", "", "local Samba UID-to-UPN gateway JSON configuration")
 	publicURL := flag.String("public-url", "", "canonical HTTPS origin used by client provisioning and IPP")
 	domainConfig := flag.String("domain-config", "", "AD/Samba LDAPS or StartTLS JSON configuration")
 	dsnFile := flag.String("postgres-dsn-file", "", "private PostgreSQL DSN file; default uses SQLite")
@@ -227,8 +229,28 @@ func run() error {
 	monitorDone := make(chan struct{})
 	go func() { defer close(monitorDone); monitorService.Run(monitorCtx) }()
 	defer func() { cancelMonitor(); <-monitorDone }()
-	api := (&server.Server{Inboxes: inboxService, Monitoring: monitorService, Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
+	application := &server.Server{Inboxes: inboxService, Monitoring: monitorService, Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}
+	api := application.Handler()
 	srv := &http.Server{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 256 << 10}
+	serveErr := make(chan error, 2)
+	var sambaHTTP *http.Server
+	if *sambaConfig != "" {
+		cfg, e := sambaprint.Load(*sambaConfig)
+		if e != nil {
+			return e
+		}
+		directory, configured := domain.(*auth.Domain)
+		if !configured || directory.Config.DirectoryBindDN == "" || directory.Config.DirectoryPasswordFile == "" {
+			return errors.New("Samba gateway requires domain configuration with directory bind")
+		}
+		socket, e := sambaprint.Listen(cfg)
+		if e != nil {
+			return e
+		}
+		sambaHTTP = &http.Server{Handler: application.SambaHandler(cfg.Users), ConnContext: sambaprint.ConnContext, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 16 << 10}
+		defer sambaHTTP.Close()
+		go func() { serveErr <- sambaHTTP.Serve(socket) }()
+	}
 	stopClaims, cancelClaims := context.WithCancel(context.Background())
 	defer cancelClaims()
 	delivery, cancelDelivery := context.WithCancel(context.Background())
@@ -238,7 +260,7 @@ func run() error {
 		store.Run(stopClaims, delivery, *workers, pipeline.Deliver)
 		close(workersDone)
 	}()
-	serveErr := make(chan error, 1)
+
 	go func() {
 		if *cert != "" {
 			serveErr <- srv.ServeTLS(listener, *cert, *key)
@@ -260,6 +282,11 @@ func run() error {
 	cancelClaims()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	shutdownErr := srv.Shutdown(shutdownCtx)
+	if sambaHTTP != nil {
+		if e := sambaHTTP.Shutdown(shutdownCtx); e != nil {
+			sambaHTTP.Close()
+		}
+	}
 	cancel()
 	if shutdownErr != nil {
 		srv.Close()
