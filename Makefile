@@ -4,6 +4,7 @@
 .PHONY: build test check linux clean
 
 build:
+	CGO_ENABLED=0 go build -trimpath -o bin/goprint-samba-submit ./cmd/goprint-samba-submit
 	CGO_ENABLED=0 go build -trimpath -o bin/goprintd ./cmd/goprintd
 	CGO_ENABLED=0 go build -trimpath -o bin/goprintctl ./cmd/goprintctl
 	CGO_ENABLED=0 go build -trimpath -o bin/goprint-ppds ./cmd/goprint-ppds
@@ -18,6 +19,8 @@ check:
 	go test -race ./...
 
 linux:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/linux-amd64/goprint-samba-submit ./cmd/goprint-samba-submit
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o dist/linux-arm64/goprint-samba-submit ./cmd/goprint-samba-submit
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/linux-amd64/goprintd ./cmd/goprintd
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/linux-amd64/goprintctl ./cmd/goprintctl
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o dist/linux-arm64/goprintd ./cmd/goprintd
