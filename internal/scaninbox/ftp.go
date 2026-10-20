@@ -407,7 +407,7 @@ func temporary(name string) bool {
 }
 
 type upload struct {
-	*os.File
+	File                       *os.File
 	fs                         *uploadFS
 	title                      string
 	size, limit                int64

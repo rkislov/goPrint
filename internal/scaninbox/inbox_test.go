@@ -265,6 +265,36 @@ func TestFTPAndFTPSUploadIsolationAndTemporaryRename(t *testing.T) {
 					t.Fatal("partial file published", jobs)
 				}
 			}
+			msg := w.command(229, "EPSV")
+			start := strings.Index(msg, "|||")
+			tail := msg[start+3:]
+			end := strings.Index(tail, "|")
+			data, e := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", tail[:end]), time.Second)
+			if e != nil {
+				t.Fatal(e)
+			}
+			data.SetDeadline(time.Now().Add(5 * time.Second))
+			fmt.Fprint(w.conn, "STOR oversized.pdf\r\n")
+			if _, _, e = w.r.ReadResponse(150); e != nil {
+				t.Fatal(e)
+			}
+			if secure {
+				tc := tls.Client(data, &tls.Config{RootCAs: roots, ServerName: "127.0.0.1", MinVersion: tls.VersionTLS12})
+				if e = tc.Handshake(); e != nil {
+					t.Fatal(e)
+				}
+				data = tc
+			}
+			_, _ = data.Write(bytes.Repeat([]byte{'x'}, (1<<20)+32768))
+			data.Close()
+			code, _, e := w.r.ReadResponse(-1)
+			if e != nil || code < 400 {
+				t.Fatal("oversized upload acknowledged", code, e)
+			}
+			jobs, _ = sc.Jobs(context.Background())
+			if len(jobs) != 2 {
+				t.Fatal("oversized upload published", jobs)
+			}
 			w.command(550, "RETR scan.pdf")
 			w.command(550, "APPE scan.pdf")
 			w.command(421, "PORT 127,0,0,1,1,1")
