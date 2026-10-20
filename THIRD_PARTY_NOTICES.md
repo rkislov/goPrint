@@ -115,3 +115,5 @@ PPDs and Linux driver packages are downloaded separately to the private data dir
 
 - github.com/fclairamb/ftpserverlib: [license](third_party/github.com__fclairamb__ftpserverlib/license.txt)
 - github.com/spf13/afero: [license](third_party/github.com__spf13__afero/LICENSE.txt)
+
+- github.com/skip2/go-qrcode: [LICENSE](third_party/github.com__skip2__go-qrcode/LICENSE)

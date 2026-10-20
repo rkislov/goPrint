@@ -26,6 +26,17 @@ func (s *Server) allowedPrinter(r *http.Request, p queue.Printer) bool {
 	if access.Public {
 		return true
 	}
+	return s.allowedAccess(r, access)
+}
+
+func (s *Server) allowedAccess(r *http.Request, access queue.PrinterAccess) bool {
+	id, ok := s.identity(r)
+	if !ok {
+		return false
+	}
+	if id.Admin || access.Public {
+		return true
+	}
 	for _, u := range access.Users {
 		if strings.EqualFold(u, id.User) {
 			return true

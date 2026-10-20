@@ -21,7 +21,13 @@ func (s *Server) scanRoutes(api *http.ServeMux) {
 			return
 		}
 		v, err := s.Scans.List(r.Context())
-		respond(w, v, err)
+		visible := []scanning.Scanner{}
+		for _, scanner := range v {
+			if s.allowedScanner(r, scanner.ID) {
+				visible = append(visible, scanner)
+			}
+		}
+		respond(w, visible, err)
 	})
 	api.HandleFunc("POST /api/scanners", func(w http.ResponseWriter, r *http.Request) {
 		if s.Scans == nil {
@@ -58,6 +64,10 @@ func (s *Server) scanRoutes(api *http.ServeMux) {
 		}
 		var o scanning.Options
 		if !decode(w, r, &o) {
+			return
+		}
+		if !s.allowedScanner(r, o.ScannerID) {
+			http.NotFound(w, r)
 			return
 		}
 		identity, _ := s.identity(r)

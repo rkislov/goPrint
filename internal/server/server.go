@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +66,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	page := func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/login" && !s.authorized(r) {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.RequestURI()), http.StatusSeeOther)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -73,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 		w.Write(b)
 	}
 	mux.HandleFunc("GET /login", page)
+	mux.HandleFunc("GET /device/{id}", page)
 	mux.HandleFunc("GET /print", page)
 	mux.HandleFunc("GET /settings", page)
 	mux.HandleFunc("GET /scan", page)
@@ -102,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	s.policyRoutes(api)
 	s.clientRoutes(api)
 	s.printerRoutes(api)
+	s.mobileRoutes(api)
 	s.personalRoutes(api)
 	s.ssoRoutes(api)
 	s.emailRoutes(api)
@@ -190,7 +193,7 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; form-action 'self'; frame-ancestors 'none'")
 		// Block browser requests from other origins, including requests through DNS rebinding.
 		if origin := r.Header.Get("Origin"); origin != "" && origin != requestOrigin(r) {
 			http.Error(w, "origin rejected", http.StatusForbidden)

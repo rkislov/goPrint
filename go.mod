@@ -12,6 +12,7 @@ require (
 	github.com/jcmturner/gofork v1.7.6
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/pdfcpu/pdfcpu v0.11.1
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/afero v1.15.0
 	github.com/ulikunitz/xz v0.5.15
 	golang.org/x/crypto v0.58.0
