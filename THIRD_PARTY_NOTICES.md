@@ -112,3 +112,6 @@ PPDs and Linux driver packages are downloaded separately to the private data dir
 - Go runtime: [LICENSE](third_party/Go/LICENSE), [PATENTS](third_party/Go/PATENTS)
 
 - github.com/gosnmp/gosnmp: [LICENSE](third_party/github.com__gosnmp__gosnmp/LICENSE), [AUTHORS](third_party/github.com__gosnmp__gosnmp/AUTHORS.md)
+
+- github.com/fclairamb/ftpserverlib: [license](third_party/github.com__fclairamb__ftpserverlib/license.txt)
+- github.com/spf13/afero: [license](third_party/github.com__spf13__afero/LICENSE.txt)

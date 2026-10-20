@@ -26,11 +26,13 @@ import (
 	"github.com/rkislov/goPrint/internal/monitoring"
 	"github.com/rkislov/goPrint/internal/personal"
 	"github.com/rkislov/goPrint/internal/queue"
+	"github.com/rkislov/goPrint/internal/scaninbox"
 	"github.com/rkislov/goPrint/internal/scanning"
 	"github.com/rkislov/goPrint/internal/watermark"
 )
 
 type Server struct {
+	Inboxes     *scaninbox.Service
 	Monitoring  *monitoring.Service
 	Antivirus   *antivirus.Service
 	emailMu     sync.Mutex
@@ -74,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /print", page)
 	mux.HandleFunc("GET /settings", page)
 	mux.HandleFunc("GET /scan", page)
+	mux.HandleFunc("GET /scan-inboxes", page)
 	mux.HandleFunc("GET /watermarks", page)
 	mux.HandleFunc("GET /clients", page)
 	mux.HandleFunc("GET /printers", page)
@@ -94,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	api := http.NewServeMux()
 	s.scanRoutes(api)
+	s.scanInboxRoutes(api)
 	s.filterRoutes(api)
 	s.policyRoutes(api)
 	s.clientRoutes(api)

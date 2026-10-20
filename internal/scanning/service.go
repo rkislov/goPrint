@@ -198,13 +198,19 @@ func (s *Service) insert(ctx context.Context, j Job) error {
 	return tx.Commit()
 }
 func (s *Service) Receive(ctx context.Context, id, title string, r io.Reader) (Job, error) {
+	return s.ReceiveFor(ctx, id, title, "local-admin", r, nil)
+}
+
+// ReceiveFor commits a device upload with a server-verified owner. Authorize is
+// checked after streaming, before antivirus validation and publication.
+func (s *Service) ReceiveFor(ctx context.Context, id, title, owner string, r io.Reader, authorize func(context.Context) error) (Job, error) {
 	if _, err := s.Get(ctx, id); err != nil {
 		return Job{}, err
 	}
 	if len(title) > 255 || strings.ContainsAny(title, "\r\n\x00") {
 		return Job{}, errors.New("invalid file name")
 	}
-	j := Job{ID: queue.ID(), ScannerID: id, Title: title, Source: "device", State: "completed", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	j := Job{Owner: owner, ID: queue.ID(), ScannerID: id, Title: title, Source: "device", State: "completed", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	f, err := os.CreateTemp(s.dir, ".upload-")
 	if err != nil {
 		return j, err
@@ -230,6 +236,16 @@ func (s *Service) Receive(ctx context.Context, id, title string, r io.Reader) (J
 	j.Format, err = detect(f.Name())
 	if err != nil {
 		return j, err
+	}
+	if authorize != nil {
+		if err = completeDocument(f.Name(), j.Format); err != nil {
+			return j, err
+		}
+	}
+	if authorize != nil {
+		if err = authorize(ctx); err != nil {
+			return j, err
+		}
 	}
 	if err = os.Rename(f.Name(), s.Path(j.ID)); err != nil {
 		return j, err
@@ -271,6 +287,9 @@ func (s *Service) Start(ctx context.Context, o Options) (Job, error) {
 	scanner, err := s.Get(ctx, o.ScannerID)
 	if err != nil {
 		return Job{}, err
+	}
+	if scanner.URI == "" {
+		return Job{}, errors.New("это назначение только для приёма файлов с МФУ")
 	}
 	if o.Source != "Platen" && o.Source != "Feeder" {
 		return Job{}, errors.New("источник: Platen или Feeder")
@@ -347,4 +366,46 @@ func (s *Service) CheckDocument(ctx context.Context, path string) error {
 		return nil
 	}
 	return s.Validator.Check(ctx, path)
+}
+
+// AddReceiver creates an upload-only device without inventing an eSCL endpoint.
+func (s *Service) AddReceiver(ctx context.Context, name string) (Scanner, error) {
+	if strings.TrimSpace(name) == "" || len(name) > 128 {
+		return Scanner{}, errors.New("укажите название МФУ")
+	}
+	v := Scanner{ID: queue.ID(), Name: name}
+	_, e := s.db.ExecContext(ctx, `INSERT INTO scanners VALUES(?,?,?,?)`, v.ID, v.Name, "", "")
+	return v, e
+}
+
+// Reject obvious truncation for receiver uploads. FTP has no declared total
+// length; clean EOF alone cannot prove that a scanner sent the whole document.
+func completeDocument(name, format string) error {
+	f, e := os.Open(name)
+	if e != nil {
+		return e
+	}
+	defer f.Close()
+	st, e := f.Stat()
+	if e != nil {
+		return e
+	}
+	n := min(st.Size(), int64(1024))
+	b := make([]byte, n)
+	if _, e = f.ReadAt(b, st.Size()-n); e != nil {
+		return e
+	}
+	valid := false
+	switch format {
+	case "application/pdf":
+		valid = strings.HasSuffix(strings.TrimSpace(string(b)), "%%EOF")
+	case "image/jpeg":
+		valid = len(b) >= 2 && b[len(b)-2] == 0xff && b[len(b)-1] == 0xd9
+	case "image/png":
+		valid = len(b) >= 12 && string(b[len(b)-8:len(b)-4]) == "IEND"
+	}
+	if !valid {
+		return errors.New("incomplete scan document")
+	}
+	return nil
 }
