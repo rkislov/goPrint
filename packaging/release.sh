@@ -3,7 +3,7 @@
 # Copyright 2026 Кислов Роман Сергеевич
 set -eu
 cd "$(dirname "$0")/.."
-version=${1:?Usage: packaging/release.sh v0.2.0-beta.1}
+version=${1:?Usage: packaging/release.sh v0.2.0-beta.2}
 case "$version" in v[0-9]* ) ;; *) echo 'Version must begin with v and a digit' >&2; exit 1;; esac
 case "$version" in *[!a-zA-Z0-9._-]*) echo 'Invalid version' >&2; exit 1;; esac
 if [ -n "$(git status --porcelain)" ]; then echo 'Commit changes before packaging' >&2; exit 1; fi
@@ -17,6 +17,7 @@ for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-s -w -X github.com/rkislov/goPrint/internal/buildinfo.Version=$version -X github.com/rkislov/goPrint/internal/buildinfo.Commit=$commit -X github.com/rkislov/goPrint/internal/buildinfo.Date=$date" -o "$root/$command" "./cmd/$command"
  done
  cp LICENSE NOTICE THIRD_PARTY_NOTICES.md README.md "$root/"
+ if [ -f "docs/RELEASE-NOTES-$version.md" ]; then cp "docs/RELEASE-NOTES-$version.md" "$root/RELEASE-NOTES.md"; fi
  cp -Rf third_party "$root/"
  cp packaging/postgresql-init.sql packaging/sqlite-to-postgresql.sh "$root/packaging/"
  cp docs/POSTGRESQL.md docs/MONITORING.md docs/SCAN-INBOX.md "$root/docs/"

@@ -3,7 +3,7 @@
 # Copyright 2026 Кислов Роман Сергеевич
 """Render public Markdown manuals with actual UI screenshots (ReportLab, Pillow)."""
 from pathlib import Path
-import re, textwrap
+import re, textwrap, posixpath
 from xml.sax.saxutils import escape
 from reportlab.pdfgen import canvas
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image, Preformatted, KeepTogether
@@ -31,13 +31,18 @@ styles = {
 def inline(t):
  t=escape(t)
  t=re.sub(r'\*\*([^*]+)\*\*',r'<b>\1</b>',t)
- t = re.sub(r'\[([^]]+)\]\((https?://[^)]+)\)',r'<link href="\2" color="#176e59">\1</link>',t)
+ def link(m):
+  label,target=m.groups()
+  if not target.startswith(('https://','http://')):
+   target='https://github.com/rkislov/goPrint/blob/v0.2.0-beta.2/'+posixpath.normpath('docs/'+target)
+  return '<link href="'+target+'" color="#176e59">'+label+'</link>'
+ t = re.sub(r'\[([^]]+)\]\(([^)]+)\)',link,t)
  return re.sub(r'`([^`]+)`',r'<b>\1</b>',t)
 def footer(c,doc):
  c.saveState();w,h=doc.pagesize
  c.setStrokeColor(HexColor('#d4e1d9'));c.line(44,40,w-44,40)
  c.setFont('Manual',8);c.setFillColor(HexColor('#62756e'))
- c.drawString(44,26,'GoPrint · v0.2.0-beta.1 · 19.10.2026')
+ c.drawString(44,26,'GoPrint · v0.2.0-beta.2 · 20.10.2026')
  c.drawRightString(w-44,26,str(doc.page));c.restoreState()
 class ManualDocument(SimpleDocTemplate):
  def afterFlowable(self, flowable):
@@ -76,7 +81,7 @@ def render(source,target):
   if image:
    caption,path=image.groups();p=source.parent/path
    with PILImage.open(p) as im: iw,ih=im.size
-   max_height=240 if p.name=='18-sso-keytab.png' else 250 if p.name=='12-katusha.jpg' else 310
+   max_height=240 if p.name=='18-sso-keytab.png' else 200 if p.name=='12-katusha.jpg' else 310
    scale=min(507/iw,max_height/ih)
    img=Image(str(p),width=iw*scale,height=ih*scale);img.hAlign='LEFT'
    story.append(KeepTogether([img,Spacer(1,6),Paragraph(escape(caption)+'. Демонстрационный стенд.',styles['caption'])]));continue
