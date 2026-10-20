@@ -109,20 +109,41 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "OPTIONS" {
-		w.Header().Set("Allow", "OPTIONS, PROPFIND, MKCOL, PUT")
+		w.Header().Set("Allow", "OPTIONS, PROPFIND, MKCOL, PUT, HEAD")
 		w.Header().Set("DAV", "1")
 		w.WriteHeader(204)
 		return
 	}
 	id := r.PathValue("scanner")
 	user, token, ok := r.BasicAuth()
-	if !ok || user != id || !s.Scans.Authenticate(r.Context(), id, token) {
+	bound := false
+	if s.Inboxes != nil {
+		if _, e := s.Inboxes.Lookup(r.Context(), id); e == nil {
+			bound = true
+		}
+	}
+	authorized := false
+	if ok && user == id {
+		if bound {
+			_, e := s.Inboxes.Authenticate(r.Context(), id, token, "webdav")
+			authorized = e == nil
+		} else {
+			authorized = s.Scans.Authenticate(r.Context(), id, token)
+		}
+	}
+	if !authorized {
 		w.Header().Set("WWW-Authenticate", `Basic realm="GoPrint scan inbox"`)
 		http.Error(w, "unauthorized", 401)
 		return
 	}
 	w.Header().Set("DAV", "1")
 	switch r.Method {
+	case "HEAD":
+		if r.PathValue("file") != "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(200)
 	case "MKCOL":
 		w.WriteHeader(http.StatusCreated)
 	case "PROPFIND":
@@ -143,7 +164,13 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "document exceeds size limit", 413)
 			return
 		}
-		j, err := s.Scans.Receive(r.Context(), id, title, r.Body)
+		var j scanning.Job
+		var err error
+		if bound {
+			j, err = s.Inboxes.Receive(r.Context(), id, token, "webdav", title, r.Body)
+		} else {
+			j, err = s.Scans.Receive(r.Context(), id, title, r.Body)
+		}
 		if err != nil {
 			if errors.Is(err, queue.ErrTooLarge) {
 				respond(w, nil, err)
@@ -155,7 +182,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Location", "/api/scans/"+j.ID+"/document")
 		w.WriteHeader(http.StatusCreated)
 	default:
-		w.Header().Set("Allow", "OPTIONS, PROPFIND, MKCOL, PUT")
+		w.Header().Set("Allow", "OPTIONS, PROPFIND, MKCOL, PUT, HEAD")
 		http.Error(w, "method not allowed", 405)
 	}
 }

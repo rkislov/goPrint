@@ -33,6 +33,7 @@ import (
 	"github.com/rkislov/goPrint/internal/personal"
 	"github.com/rkislov/goPrint/internal/printing"
 	"github.com/rkislov/goPrint/internal/queue"
+	"github.com/rkislov/goPrint/internal/scaninbox"
 	"github.com/rkislov/goPrint/internal/scanning"
 	"github.com/rkislov/goPrint/internal/server"
 	"github.com/rkislov/goPrint/internal/watermark"
@@ -165,6 +166,33 @@ func run() error {
 	defer scans.Close()
 	av := antivirus.New(store)
 	scans.Validator = av
+	inboxService, err := scaninbox.New(*data, store, scans, func(ctx context.Context, user string) (string, error) {
+		if user == "local-admin" {
+			return user, nil
+		}
+		resolver, ok := domain.(interface {
+			ResolveUser(context.Context, string) (auth.Identity, error)
+		})
+		if !ok {
+			return "", errors.New("domain directory unavailable")
+		}
+		id, e := resolver.ResolveUser(ctx, user)
+		return id.User, e
+	}, func() (*tls.Config, error) {
+		if *cert == "" || *key == "" {
+			return nil, errors.New("TLS not configured")
+		}
+		pair, e := tls.LoadX509KeyPair(*cert, *key)
+		if e != nil {
+			return nil, e
+		}
+		return &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}, nil
+	})
+	if err != nil {
+		return err
+	}
+	defer inboxService.Close()
+
 	personalService, err := personal.New(*data, store)
 	if err != nil {
 		return err
@@ -199,7 +227,7 @@ func run() error {
 	monitorDone := make(chan struct{})
 	go func() { defer close(monitorDone); monitorService.Run(monitorCtx) }()
 	defer func() { cancelMonitor(); <-monitorDone }()
-	api := (&server.Server{Monitoring: monitorService, Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
+	api := (&server.Server{Inboxes: inboxService, Monitoring: monitorService, Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}).Handler()
 	srv := &http.Server{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 256 << 10}
 	stopClaims, cancelClaims := context.WithCancel(context.Background())
 	defer cancelClaims()

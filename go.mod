@@ -4,6 +4,7 @@ go 1.26.9
 
 require (
 	github.com/OpenPrinting/goipp v1.1.0
+	github.com/fclairamb/ftpserverlib v0.32.4
 	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667
 	github.com/go-ldap/ldap/v3 v3.4.12
 	github.com/gosnmp/gosnmp v1.45.0
@@ -11,6 +12,7 @@ require (
 	github.com/jcmturner/gofork v1.7.6
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/pdfcpu/pdfcpu v0.11.1
+	github.com/spf13/afero v1.15.0
 	github.com/ulikunitz/xz v0.5.15
 	golang.org/x/crypto v0.58.0
 	modernc.org/sqlite v1.39.1

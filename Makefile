@@ -30,8 +30,8 @@ linux:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o dist/linux-arm64/goprint-mail-submit ./cmd/goprint-mail-submit
 	cp LICENSE NOTICE THIRD_PARTY_NOTICES.md dist/linux-amd64/
 	cp LICENSE NOTICE THIRD_PARTY_NOTICES.md dist/linux-arm64/
-	cp -R third_party dist/linux-amd64/
-	cp -R third_party dist/linux-arm64/
+	cp -Rf third_party dist/linux-amd64/
+	cp -Rf third_party dist/linux-arm64/
 
 clean:
 	rm -rf bin dist
