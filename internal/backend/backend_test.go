@@ -104,7 +104,7 @@ func TestIPPAmbiguousResponseNeverRetries(t *testing.T) {
 	}
 }
 func TestValidatePrinter(t *testing.T) {
-	for _, uri := range []string{"file:///etc/passwd", "socket://127.0.0.1:9100/path", "ipp://user:secret@localhost/ipp/print", "http://localhost/print"} {
+	for _, uri := range []string{"file:///etc/passwd", "socket://127.0.0.1:9100/path", "ipp://user:secret@localhost/ipp/print", "http://localhost/print", "smb://server/office", "smb://LAB;alice:secret@server/office"} {
 		if err := Validate(queue.Printer{Name: "test", URI: uri, Formats: []string{"application/pdf"}}); err == nil {
 			t.Errorf("accepted %s", uri)
 		}
