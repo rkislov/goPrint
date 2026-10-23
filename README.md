@@ -6,7 +6,7 @@ GoPrint — проект сервера печати на Go для Linux и с�
 
 ## Сборка и запуск
 
-Нужен Go 1.26.9 или новее. На Linux и macOS:
+Нужен Go 1.26.10 или новее. На Linux и macOS:
 
 ```sh
 make build
