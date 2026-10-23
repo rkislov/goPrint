@@ -33,6 +33,7 @@ import (
 )
 
 type Server struct {
+	SMB         *backend.SMBService
 	Inboxes     *scaninbox.Service
 	Monitoring  *monitoring.Service
 	Antivirus   *antivirus.Service
@@ -105,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	s.policyRoutes(api)
 	s.clientRoutes(api)
 	s.printerRoutes(api)
+	s.smbRoutes(api)
 	s.mobileRoutes(api)
 	s.personalRoutes(api)
 	s.ssoRoutes(api)
