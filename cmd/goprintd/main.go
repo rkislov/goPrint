@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/rkislov/goPrint/internal/backend"
 	"github.com/rkislov/goPrint/internal/buildinfo"
 	"log/slog"
 	"net"
@@ -215,7 +216,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	pipeline := &printing.Pipeline{Antivirus: av, Store: store, Marker: mark, Filters: filters}
+	smbService, err := backend.NewSMB(*data, store)
+	if err != nil {
+		return err
+	}
+	pipeline := &printing.Pipeline{SMB: smbService, Antivirus: av, Store: store, Marker: mark, Filters: filters}
 	exporter := audit.New(store)
 	auditCtx, cancelAudit := context.WithCancel(context.Background())
 	auditDone := make(chan struct{})
@@ -229,7 +234,7 @@ func run() error {
 	monitorDone := make(chan struct{})
 	go func() { defer close(monitorDone); monitorService.Run(monitorCtx) }()
 	defer func() { cancelMonitor(); <-monitorDone }()
-	application := &server.Server{Inboxes: inboxService, Monitoring: monitorService, Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}
+	application := &server.Server{SMB: smbService, Inboxes: inboxService, Monitoring: monitorService, Antivirus: av, Personal: personalService, Mail: mailService, PublicURL: *publicURL, Domain: domain, SSO: negotiator, Audit: exporter, Store: store, Token: token, Catalog: catalog, Scans: scans, Filters: drivers.NewFilterManager(filepath.Join(*data, "filters")), Background: catalogCtx}
 	api := application.Handler()
 	srv := &http.Server{TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}, Handler: api, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 256 << 10}
 	serveErr := make(chan error, 2)

@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/OpenPrinting/goipp"
+	"github.com/rkislov/goPrint/internal/backend"
 	"github.com/rkislov/goPrint/internal/drivers"
 	"github.com/rkislov/goPrint/internal/filtering"
 	"github.com/rkislov/goPrint/internal/queue"
@@ -129,5 +130,30 @@ func TestMissingDriverNeverContactsPrinter(t *testing.T) {
 	r := pipeline.Deliver(context.Background(), p, j, pipeline.Store.Document(j.ID))
 	if r.State != "failed" || received.Load() != 0 {
 		t.Fatalf("unfiltered fallback: %+v, requests: %d", r, received.Load())
+	}
+}
+
+func TestPPDPreparedDocumentReachesSMB(t *testing.T) {
+	pipeline, p, j := setup(t, "smb://server/office", testutil.PPD)
+	dir := t.TempDir()
+	smb, err := backend.NewSMB(dir, pipeline.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipeline.SMB = smb
+	if _, err = smb.Configure(context.Background(), p.ID, backend.SMBConfig{Enabled: true, Username: "service", Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "received.ps")
+	script := "#!/bin/sh\ncase \"$*\" in *'print document.prn'*) /bin/cp document.prn \"" + target + "\";; esac\n"
+	os.WriteFile(filepath.Join(dir, "smbclient"), []byte(script), 0700)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	result := pipeline.Deliver(context.Background(), p, j, pipeline.Store.Document(j.ID))
+	if result.State != "submitted" {
+		t.Fatal(result)
+	}
+	b, err := os.ReadFile(target)
+	if err != nil || !bytes.Contains(b, []byte("%!PS")) || !bytes.Contains(b, []byte("GOPRINT_PPD_APPLIED")) {
+		t.Fatalf("PPD output not delivered: %v", err)
 	}
 }

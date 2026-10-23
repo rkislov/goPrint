@@ -12,12 +12,16 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/rkislov/goPrint/internal/queue"
 )
+
+var smbHost = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
+var smbShare = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._$-]{0,127}$`)
 
 type Result struct{ State, Detail, RemoteID string }
 
@@ -41,12 +45,16 @@ func Validate(p queue.Printer) error {
 		if err != nil || port < 1 || port > 65535 {
 			return errors.New("invalid socket port")
 		}
+	case "smb":
+		if !smbHost.MatchString(u.Hostname()) || u.Port() != "" || !smbShare.MatchString(strings.TrimPrefix(u.Path, "/")) || u.RawPath != "" {
+			return errors.New("SMB URI must be smb://host/share; use letters, digits, dots, underscores or hyphens")
+		}
 	case "ipp", "ipps":
 		if u.Path == "" {
 			return errors.New("IPP URI requires printer path")
 		}
 	default:
-		return errors.New("supported URI schemes: socket, ipp, ipps")
+		return errors.New("supported URI schemes: socket, ipp, ipps, smb")
 	}
 	if len(p.Formats) == 0 || len(p.Formats) > 16 {
 		return errors.New("specify the document formats accepted by this printer")
@@ -69,7 +77,10 @@ func Deliver(ctx context.Context, p queue.Printer, j queue.Job, path string) Res
 	if strings.HasPrefix(p.URI, "ipp://") || strings.HasPrefix(p.URI, "ipps://") {
 		return deliverIPP(ctx, p, j, f)
 	}
-	u, _ := url.Parse(p.URI)
+	u, err := url.Parse(p.URI)
+	if err != nil || u.Scheme != "socket" {
+		return Result{State: "failed", Detail: "delivery backend unavailable"}
+	}
 	conn, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, "tcp", u.Host)
 	if err != nil {
 		return Result{State: "failed", Detail: "cannot connect to printer"}

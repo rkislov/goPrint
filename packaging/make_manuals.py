@@ -34,7 +34,7 @@ def inline(t):
  def link(m):
   label,target=m.groups()
   if not target.startswith(('https://','http://')):
-   target='https://github.com/rkislov/goPrint/blob/v0.2.0-beta.2/'+posixpath.normpath('docs/'+target)
+   target='https://github.com/rkislov/goPrint/blob/v0.2.0-beta.3/'+posixpath.normpath('docs/'+target)
   return '<link href="'+target+'" color="#176e59">'+label+'</link>'
  t = re.sub(r'\[([^]]+)\]\(([^)]+)\)',link,t)
  return re.sub(r'`([^`]+)`',r'<b>\1</b>',t)
@@ -42,7 +42,7 @@ def footer(c,doc):
  c.saveState();w,h=doc.pagesize
  c.setStrokeColor(HexColor('#d4e1d9'));c.line(44,40,w-44,40)
  c.setFont('Manual',8);c.setFillColor(HexColor('#62756e'))
- c.drawString(44,26,'GoPrint · v0.2.0-beta.2 · 20.10.2026')
+ c.drawString(44,26,'GoPrint · v0.2.0-beta.3 · 23.10.2026')
  c.drawRightString(w-44,26,str(doc.page));c.restoreState()
 class ManualDocument(SimpleDocTemplate):
  def afterFlowable(self, flowable):

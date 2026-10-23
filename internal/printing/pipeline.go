@@ -17,6 +17,7 @@ type FileValidator interface {
 	Check(context.Context, string) error
 }
 type Pipeline struct {
+	SMB       *backend.SMBService
 	Antivirus FileValidator
 	Store     *queue.Store
 	Marker    *watermark.Engine
@@ -76,6 +77,14 @@ func (p *Pipeline) Deliver(ctx context.Context, printer queue.Printer, j queue.J
 	// original uploaded PDF or the intermediate watermark result.
 	j.Format = prepared.Format
 	j.Size = prepared.Size
-	r := backend.Deliver(ctx, printer, j, prepared.Path)
+	var r backend.Result
+	if strings.HasPrefix(printer.URI, "smb://") {
+		if p.SMB == nil {
+			return fail(fmt.Errorf("SMB backend unavailable"))
+		}
+		r = p.SMB.Deliver(ctx, printer, j, prepared.Path)
+	} else {
+		r = backend.Deliver(ctx, printer, j, prepared.Path)
+	}
 	return queue.DeliveryResult{State: r.State, Detail: r.Detail, RemoteID: r.RemoteID}
 }

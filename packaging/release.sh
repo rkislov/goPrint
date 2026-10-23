@@ -3,7 +3,7 @@
 # Copyright 2026 Кислов Роман Сергеевич
 set -eu
 cd "$(dirname "$0")/.."
-version=${1:?Usage: packaging/release.sh v0.2.0-beta.2}
+version=${1:?Usage: packaging/release.sh v0.2.0-beta.3}
 case "$version" in v[0-9]* ) ;; *) echo 'Version must begin with v and a digit' >&2; exit 1;; esac
 case "$version" in *[!a-zA-Z0-9._-]*) echo 'Invalid version' >&2; exit 1;; esac
 if [ -n "$(git status --porcelain)" ]; then echo 'Commit changes before packaging' >&2; exit 1; fi
@@ -24,9 +24,11 @@ for arch in amd64 arm64; do
  cp packaging/goprint.service packaging/domain.example.json packaging/domain-sso.example.json packaging/samba.example.json packaging/samba-share.example.conf packaging/samba-systemd.example.conf "$root/packaging/"
  cp docs/ADMINISTRATOR.md docs/USER.md docs/DOMAIN-AND-CLIENTS.md docs/BETA-OPERATIONS.md "$root/docs/"
  cp -R docs/images "$root/docs/"
+ cp -R docs/presentation "$root/docs/"
  cp output/pdf/GoPrint-Administrator.pdf output/pdf/GoPrint-User.pdf "$root/docs/"
  printf 'version=%s\ncommit=%s\ndate=%s\nplatform=linux/%s\n' "$version" "$commit" "$date" "$arch" > "$root/BUILDINFO"
  tar -czf "dist/release/$name.tar.gz" -C dist/release "$name"
 done
 cp output/pdf/GoPrint-Administrator.pdf output/pdf/GoPrint-User.pdf dist/release/
-(cd dist/release && shasum -a 256 "goprint-$version-linux-amd64.tar.gz" "goprint-$version-linux-arm64.tar.gz" GoPrint-Administrator.pdf GoPrint-User.pdf > SHA256SUMS)
+cp docs/presentation/GoPrint-Product.pptx docs/presentation/GoPrint-Product.pdf dist/release/
+(cd dist/release && shasum -a 256 "goprint-$version-linux-amd64.tar.gz" "goprint-$version-linux-arm64.tar.gz" GoPrint-Administrator.pdf GoPrint-User.pdf GoPrint-Product.pptx GoPrint-Product.pdf > SHA256SUMS)
