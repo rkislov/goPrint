@@ -19,6 +19,7 @@ import (
 
 	"github.com/OpenPrinting/goipp"
 	"github.com/gosnmp/gosnmp"
+	"github.com/rkislov/goPrint/internal/diagnostics"
 	"github.com/rkislov/goPrint/internal/queue"
 )
 
@@ -92,11 +93,11 @@ func probeIPP(ctx context.Context, p queue.Printer, c Config) (Reading, error) {
 	r.Header.Set("Content-Type", "application/ipp")
 	resp, e := client.Do(r)
 	if e != nil {
-		return Reading{}, errors.New("IPP transport or TLS failed")
+		return Reading{}, fmt.Errorf("IPP transport or TLS failed: %w", e)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return Reading{}, fmt.Errorf("IPP HTTP %d", resp.StatusCode)
+		return Reading{}, diagnostics.HTTPStatus{Code: resp.StatusCode}
 	}
 	var msg goipp.Message
 	if e = msg.Decode(io.LimitReader(resp.Body, 1<<20)); e != nil || msg.RequestID != 1 || msg.Code >= 0x0100 {

@@ -33,6 +33,7 @@ import (
 )
 
 type Server struct {
+	diagGate    diagnosticGate
 	SMB         *backend.SMBService
 	Inboxes     *scaninbox.Service
 	Monitoring  *monitoring.Service
@@ -79,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /device/{id}", page)
 	mux.HandleFunc("GET /print", page)
 	mux.HandleFunc("GET /settings", page)
+	mux.HandleFunc("GET /diagnostics", page)
 	mux.HandleFunc("GET /scan", page)
 	mux.HandleFunc("GET /scan-inboxes", page)
 	mux.HandleFunc("GET /watermarks", page)
@@ -107,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	s.clientRoutes(api)
 	s.printerRoutes(api)
 	s.smbRoutes(api)
+	s.diagnosticRoutes(api)
 	s.mobileRoutes(api)
 	s.personalRoutes(api)
 	s.ssoRoutes(api)
