@@ -19,3 +19,6 @@ textarea{width:100%;min-height:90px;padding:10px 12px;border:1px solid #dce4de;b
 }
 @media print{body>*{display:none!important}body>#qr-dialog[open]{display:block!important;position:static;width:100%;max-height:none;border:0;padding:0}#qr-dialog>*{display:none!important}#qr-dialog>#qr-label{display:block!important;margin:0 auto;width:80mm}#qr-label img{width:65mm;height:65mm}#qr-label strong{font-size:16pt}#qr-label p{font-size:10pt}}
 @media(max-width:650px){#print-page:not([hidden]){display:flex;flex-direction:column}#print-page>.page-heading{order:0}#print-page>.stats{order:1}#print-page>.jobs-panel{order:2;margin:0 0 24px}#print-page>.print-columns{order:3}}
+
+/* Administrator connection diagnostics */
+#diagnostics-page{max-width:1050px}.diagnostic-card{margin:22px 0}.diagnostic-card>.button{margin-top:16px}.diagnostic-result:not(:empty){margin-top:20px;padding-top:16px;border-top:1px solid var(--border)}.diagnostic-steps{padding-left:24px}.diagnostic-steps li{padding:12px 0}.diagnostic-steps p{margin:8px 0;line-height:1.6}.diagnostic-steps small,.diagnostic-result>small{color:var(--muted)}.diagnostic-summary{font-weight:700}.diagnostic-steps .ok strong,.diagnostic-summary.ok{color:#23634d}.diagnostic-steps .warning strong,.diagnostic-summary.warning{color:#856000}.diagnostic-steps .error strong,.diagnostic-summary.error{color:#a53831}
