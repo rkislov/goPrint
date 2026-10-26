@@ -3,7 +3,7 @@
 # Copyright 2026 Кислов Роман Сергеевич
 set -eu
 cd "$(dirname "$0")/.."
-version=${1:?Usage: packaging/release.sh v0.2.0-beta.3}
+version=${1:?Usage: packaging/release.sh v0.2.0-beta.4}
 case "$version" in v[0-9]* ) ;; *) echo 'Version must begin with v and a digit' >&2; exit 1;; esac
 case "$version" in *[!a-zA-Z0-9._-]*) echo 'Invalid version' >&2; exit 1;; esac
 if [ -n "$(git status --porcelain)" ]; then echo 'Commit changes before packaging' >&2; exit 1; fi
