@@ -12,6 +12,7 @@ import (
 
 func main() {
 	dir := flag.String("dir", "./var/goprint/ppds", "catalog directory")
+	sindoh := flag.Bool("sindoh", false, "import a pinned official Sindoh ZIP")
 	vendor := flag.Bool("katusha", false, "import official Katusha ZIP instead of OpenPrinting tar.gz")
 	archive := flag.String("archive", "", "local OpenPrinting .tar.gz archive")
 	version := flag.Bool("version", false, "print build version")
@@ -25,14 +26,22 @@ func main() {
 		os.Exit(1)
 	}
 	var importErr error
-	if *vendor {
+	if *vendor && *sindoh {
+		fmt.Fprintln(os.Stderr, "choose only one vendor")
+		os.Exit(1)
+	}
+	if *vendor || *sindoh {
 		c, e := drivers.Open(*dir)
 		importErr = e
 		if e == nil {
 			var b []byte
 			b, importErr = os.ReadFile(*archive)
 			if importErr == nil {
-				importErr = c.ImportKatusha(b)
+				if *sindoh {
+					importErr = c.ImportSindoh(b)
+				} else {
+					importErr = c.ImportKatusha(b)
+				}
 			}
 		}
 	} else {

@@ -126,7 +126,7 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "catalog unavailable", 503)
 			return
 		}
-		respond(w, map[string]any{"profiles": s.Catalog.Search(r.URL.Query().Get("q"), r.URL.Query().Get("manufacturer")), "manufacturers": s.Catalog.Manufacturers(), "status": s.Catalog.Status(), "katusha": s.Catalog.KatushaStatus()}, nil)
+		respond(w, map[string]any{"profiles": s.Catalog.Search(r.URL.Query().Get("q"), r.URL.Query().Get("manufacturer")), "manufacturers": s.Catalog.Manufacturers(), "status": s.Catalog.Status(), "sindoh": s.Catalog.SindohStatus(), "katusha": s.Catalog.KatushaStatus()}, nil)
 	})
 	api.HandleFunc("GET /api/drivers/katusha/packages/{name}", func(w http.ResponseWriter, r *http.Request) {
 		if s.Catalog == nil {
@@ -152,6 +152,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		started := s.Catalog.StartSync(ctx)
 		s.Catalog.StartKatushaSync(ctx)
+		s.Catalog.StartSindohSync(ctx)
 		respond(w, map[string]bool{"started": started}, nil)
 	})
 	api.HandleFunc("GET /api/printers", func(w http.ResponseWriter, r *http.Request) {
