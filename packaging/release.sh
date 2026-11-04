@@ -3,7 +3,7 @@
 # Copyright 2026 Кислов Роман Сергеевич
 set -eu
 cd "$(dirname "$0")/.."
-version=${1:?Usage: packaging/release.sh v0.2.0-beta.5}
+version=${1:?Usage: packaging/release.sh v0.2.0-beta.6}
 case "$version" in v[0-9]* ) ;; *) echo 'Version must begin with v and a digit' >&2; exit 1;; esac
 case "$version" in *[!a-zA-Z0-9._-]*) echo 'Invalid version' >&2; exit 1;; esac
 if [ -n "$(git status --porcelain -- cmd internal go.mod go.sum README.md LICENSE NOTICE THIRD_PARTY_NOTICES.md third_party packaging docs)" ]; then echo 'Commit changes before packaging' >&2; exit 1; fi
@@ -20,8 +20,8 @@ for arch in amd64 arm64; do
  if [ -f "docs/RELEASE-NOTES-$version.md" ]; then cp "docs/RELEASE-NOTES-$version.md" "$root/RELEASE-NOTES.md"; fi
  cp -Rf third_party "$root/"
  cp packaging/postgresql-init.sql packaging/sqlite-to-postgresql.sh "$root/packaging/"
- cp docs/POSTGRESQL.md docs/MONITORING.md docs/SCAN-INBOX.md docs/SAMBA.md docs/SINDOH.md docs/ALT-LINUX.md "$root/docs/"
- cp -R packaging/altlinux "$root/packaging/"
+ cp docs/POSTGRESQL.md docs/MONITORING.md docs/SCAN-INBOX.md docs/SAMBA.md docs/SINDOH.md docs/ALT-LINUX.md docs/ALT-LINUX-VALIDATION.md "$root/docs/"
+ git archive HEAD packaging/altlinux | tar -x -C "$root"
  cp packaging/goprint.service packaging/domain.example.json packaging/domain-sso.example.json packaging/samba.example.json packaging/samba-share.example.conf packaging/samba-systemd.example.conf "$root/packaging/"
  cp docs/ADMINISTRATOR.md docs/USER.md docs/DOMAIN-AND-CLIENTS.md docs/BETA-OPERATIONS.md "$root/docs/"
  cp -R docs/images "$root/docs/"

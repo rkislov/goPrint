@@ -31,4 +31,4 @@ for branch in ${GOPRINT_ALT_BRANCHES:-p10 p11}; do
  done
 done
 
-(cd dist/release && shasum -a 256 "goprint-$tag-linux-amd64.tar.gz" "goprint-$tag-linux-arm64.tar.gz" goprint-*-alt0.beta.*.rpm GoPrint-Administrator.pdf GoPrint-User.pdf GoPrint-Product.pptx GoPrint-Product.pdf > SHA256SUMS)
+(cd dist/release && shasum -a 256 "goprint-$tag-linux-amd64.tar.gz" "goprint-$tag-linux-arm64.tar.gz" "goprint-$rpm_version-alt0.beta.$beta.p10.1.aarch64.rpm" "goprint-$rpm_version-alt0.beta.$beta.p10.1.x86_64.rpm" "goprint-$rpm_version-alt0.beta.$beta.p11.1.aarch64.rpm" "goprint-$rpm_version-alt0.beta.$beta.p11.1.x86_64.rpm" GoPrint-Administrator.pdf GoPrint-User.pdf GoPrint-Product.pptx GoPrint-Product.pdf > SHA256SUMS)
