@@ -46,6 +46,7 @@ type Status struct {
 }
 type Catalog struct {
 	katusha  VendorStatus
+	sindoh   VendorStatus
 	mu       sync.RWMutex
 	dir      string
 	profiles []Profile
@@ -282,7 +283,7 @@ func (c *Catalog) Import(r io.Reader) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, p := range c.profiles {
-		if p.Source == katushaSource {
+		if p.Source == katushaSource || p.Source == sindohSource {
 			profiles = mergeProfiles(profiles, []Profile{p})
 		}
 	}
@@ -394,18 +395,20 @@ func (c *Catalog) PPD(id string) ([]byte, error) {
 }
 
 func (c *Catalog) loadVendor() error {
-	b, err := os.ReadFile(filepath.Join(c.dir, "vendor-katusha.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	for _, name := range []string{"vendor-katusha.json", "vendor-sindoh.json"} {
+		b, err := os.ReadFile(filepath.Join(c.dir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var p []Profile
+		if err = json.Unmarshal(b, &p); err != nil {
+			return err
+		}
+		c.profiles = mergeProfiles(c.profiles, p)
 	}
-	if err != nil {
-		return err
-	}
-	var p []Profile
-	if err = json.Unmarshal(b, &p); err != nil {
-		return err
-	}
-	c.profiles = mergeProfiles(c.profiles, p)
 	c.status.Count = len(c.profiles)
 	return nil
 }

@@ -159,6 +159,9 @@ func run() error {
 	if *preload && catalog.Status().SHA256 == "" {
 		catalog.StartSync(catalogCtx)
 	}
+	if *preload && catalog.SindohStatus().Count == 0 {
+		catalog.StartSindohSync(catalogCtx)
+	}
 	if *preload && catalog.KatushaStatus().Count == 0 {
 		catalog.StartKatushaSync(catalogCtx)
 	}
