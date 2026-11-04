@@ -26,7 +26,7 @@ func InstalledFilters() []Filter {
 			filters[i].Installed = true
 			continue
 		}
-		for _, dir := range []string{"/usr/lib/cups/filter", "/usr/libexec/cups/filter", "/usr/sbin"} {
+		for _, dir := range []string{"/usr/lib/cups/filter", "/usr/lib64/cups/filter", "/usr/libexec/cups/filter", "/usr/sbin"} {
 			if info, err := os.Stat(filepath.Join(dir, filters[i].Name)); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 				filters[i].Installed = true
 				break
@@ -52,11 +52,17 @@ func (f *FilterManager) Status() string {
 	if runtime.GOOS != "linux" {
 		return "Сервер работает на " + runtime.GOOS + ". Linux-фильтры устанавливаются на целевом Linux-сервере; ниже показаны доступные локальные компоненты."
 	}
+	if isALT() {
+		return "ALT Linux: базовые фильтры устанавливаются зависимостями RPM GoPrint. Дополнительные пакеты устанавливает администратор через apt-get install; загрузка .deb здесь не используется."
+	}
 	return "Загрузите пакеты из настроенных репозиториев Debian/Ubuntu. Установка зависимостей выполняется администратором через apt."
 }
 func (f *FilterManager) Download(ctx context.Context) (string, error) {
 	if runtime.GOOS != "linux" {
 		return "", errors.New("загрузка .deb-пакетов доступна на Debian/Ubuntu; на macOS используются системные фильтры")
+	}
+	if isALT() {
+		return "", errors.New("ALT Linux: установите нужные RPM-фильтры через apt-get install cups cups-filters ghostscript; эта кнопка предназначена для .deb Debian/Ubuntu")
 	}
 	apt, err := exec.LookPath("apt-get")
 	if err != nil {
@@ -93,3 +99,5 @@ func (f *FilterManager) Download(ctx context.Context) (string, error) {
 	}()
 	return "Загрузка пакетов запущена. Статус доступен в разделе фильтров.", nil
 }
+
+func isALT() bool { st, e := os.Stat("/etc/altlinux-release"); return e == nil && !st.IsDir() }

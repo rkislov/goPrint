@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Кислов Роман Сергеевич
+set -eu
+[ "$(id -u)" = 0 ] || { echo 'Run goprint-setup as root.' >&2; exit 1; }
+dir=/etc/goprint
+file=$dir/environment
+[ -d "$dir" ] && [ ! -L "$file" ] || { echo 'Invalid configuration path.' >&2; exit 1; }
+mkdir "$dir/.setup-lock" 2>/dev/null || { echo 'Another setup is running; check /etc/goprint/.setup-lock.' >&2; exit 1; }
+tmp=
+trap 'test -z "$tmp" || rm -f "$tmp"; rmdir "$dir/.setup-lock"' EXIT
+trap 'exit 1' HUP INT TERM
+if [ -f "$file" ] && grep -Eq '^GOPRINT_TOKEN=.{32,}$' "$file"; then
+    echo 'GoPrint is already configured; existing token preserved.'
+    exit 0
+fi
+token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
+[ "${#token}" = 64 ] || { echo 'Cannot generate a secure token.' >&2; exit 1; }
+tmp=$(mktemp "$dir/.environment.XXXXXX")
+if [ -f "$file" ]; then grep -v '^GOPRINT_TOKEN=' "$file" > "$tmp" || :; fi
+printf 'GOPRINT_TOKEN=%s\n' "$token" >> "$tmp"
+chown root:goprint "$tmp"
+chmod 0640 "$tmp"
+mv -f "$tmp" "$file"
+tmp=
+echo 'Created /etc/goprint/environment. Token is not printed; read the file as root for first login.'
+echo 'Review network/TLS settings, then start: systemctl enable --now goprint'
