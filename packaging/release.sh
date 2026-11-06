@@ -20,7 +20,7 @@ for arch in amd64 arm64; do
  if [ -f "docs/RELEASE-NOTES-$version.md" ]; then cp "docs/RELEASE-NOTES-$version.md" "$root/RELEASE-NOTES.md"; fi
  cp -Rf third_party "$root/"
  cp packaging/postgresql-init.sql packaging/sqlite-to-postgresql.sh "$root/packaging/"
- cp docs/POSTGRESQL.md docs/MONITORING.md docs/SCAN-INBOX.md docs/SAMBA.md docs/SINDOH.md docs/ALT-LINUX.md docs/ALT-LINUX-VALIDATION.md "$root/docs/"
+ cp docs/POSTGRESQL.md docs/MONITORING.md docs/SCAN-INBOX.md docs/SAMBA.md docs/SINDOH.md docs/ALT-LINUX.md docs/ALT-LINUX-VALIDATION.md docs/BRANDING.md "$root/docs/"
  git archive HEAD packaging/altlinux | tar -x -C "$root"
  cp packaging/goprint.service packaging/domain.example.json packaging/domain-sso.example.json packaging/samba.example.json packaging/samba-share.example.conf packaging/samba-systemd.example.conf "$root/packaging/"
  cp docs/ADMINISTRATOR.md docs/USER.md docs/DOMAIN-AND-CLIENTS.md docs/BETA-OPERATIONS.md "$root/docs/"
