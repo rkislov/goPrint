@@ -74,7 +74,12 @@ func (s *Server) Handler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		b, _ := web.ReadFile("web/index.html")
-		w.Write(b)
+		c, err := s.branding(r.Context())
+		if err != nil {
+			http.Error(w, "branding unavailable", 500)
+			return
+		}
+		w.Write(brandPage(b, c))
 	}
 	mux.HandleFunc("GET /login", page)
 	mux.HandleFunc("GET /device/{id}", page)
@@ -102,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 		respond(w, map[string]bool{"domain": s.Domain != nil, "sso": s.SSO != nil}, nil)
 	})
 	api := http.NewServeMux()
+	s.brandingRoutes(mux, api)
 	s.scanRoutes(api)
 	s.scanInboxRoutes(api)
 	s.filterRoutes(api)
