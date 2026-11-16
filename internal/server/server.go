@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	s.policyRoutes(api)
 	s.clientRoutes(api)
 	s.printerRoutes(api)
+	s.defaultPrinterRoutes(api)
 	s.smbRoutes(api)
 	s.diagnosticRoutes(api)
 	s.mobileRoutes(api)

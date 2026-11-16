@@ -27,3 +27,9 @@ textarea{width:100%;min-height:90px;padding:10px 12px;border:1px solid #dce4de;b
 .powered-by{display:inline-block;background:#fff;color:#374151;font-size:12px;font-weight:600;line-height:1.5;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;max-width:100%;overflow-wrap:anywhere}.login-box>.powered-by{margin-top:8px}.main-footer{flex-wrap:wrap;align-items:center;gap:10px}.brand [data-brand-name]{overflow-wrap:anywhere;min-width:0;letter-spacing:normal;font-size:20px}.brand-logo{width:38px;height:38px;object-fit:contain;flex-shrink:0;border-radius:6px;background:#fff}.brand-logo-preview{display:block;max-width:180px;max-height:100px;object-fit:contain;margin:12px 0}#brand-color{width:100%;max-width:160px;min-height:44px;padding:4px}.qr-powered{color:#111;font-weight:600}
 
 #brand-logo{width:100%;max-width:100%;min-width:0;font-size:12px}
+
+#print-default-form{margin-bottom:20px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+#print-default-form .button{margin-top:8px}
+.print-default-rule{min-width:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;border:1px solid var(--border);border-radius:8px;margin:14px 0;padding:12px}
+.print-default-rule .rule-printer{grid-column:1/-1}
+@media(max-width:560px){.print-default-rule{grid-template-columns:minmax(0,1fr)}}
